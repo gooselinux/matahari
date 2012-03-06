@@ -1,0 +1,39 @@
+diff --git a/src/lib/sysconfig.c b/src/lib/sysconfig.c
+index 4e32737..0301734 100644
+--- a/src/lib/sysconfig.c
++++ b/src/lib/sysconfig.c
+@@ -38,7 +38,7 @@ MH_TRACE_INIT_DATA(mh_sysconfig);
+ #ifdef WIN32
+ static const char DEFAULT_KEYS_DIR[] = "c:\\";
+ #else
+-static const char DEFAULT_KEYS_DIR[] = "/var/lib/matahari/";
++static const char DEFAULT_KEYS_DIR[] = "/var/lib/matahari/sysconfig-keys/";
+ #endif
+ 
+ /*!
+@@ -74,6 +74,12 @@ set_key(const char *key, const char *contents)
+         return -1;
+     }
+ 
++    if (!g_file_test(keys_dir_get(), G_FILE_TEST_IS_DIR) &&
++        g_mkdir(keys_dir_get(), 0755) < 0) {
++        mh_err("Could not create keys directory %s", keys_dir_get());
++        return FALSE;
++    }
++        
+     g_snprintf(key_file, sizeof(key_file), "%s%s", keys_dir_get(), key);
+     if (!g_file_set_contents(key_file, contents, strlen(contents), NULL)) {
+         mh_err("Could not set file %s", key_file);
+diff --git a/src/tests/mh_api_sysconfig.h b/src/tests/mh_api_sysconfig.h
+index 0ea4507..0bab713 100644
+--- a/src/tests/mh_api_sysconfig.h
++++ b/src/tests/mh_api_sysconfig.h
+@@ -31,7 +31,7 @@ class MhApiSysconfigSuite : public CxxTest::TestSuite
+         const char key[] = "org.matahariproject.test.unittest"; // Unimportant key defined
+         char *key_res;
+ 
+-        mh_sysconfig_keys_dir_set("/tmp/");
++        mh_sysconfig_keys_dir_set("/tmp/matahari-sysconfig-keys/");
+ 
+         TS_ASSERT((mh_sysconfig_set_configured(key, "OK")) == TRUE);
+         TS_ASSERT(((key_res = mh_sysconfig_is_configured(key))) != NULL);

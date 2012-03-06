@@ -1,0 +1,117 @@
+diff --git a/src/include/matahari/utilities.h b/src/include/matahari/utilities.h
+index cea0c3b..b6cce84 100644
+--- a/src/include/matahari/utilities.h
++++ b/src/include/matahari/utilities.h
+@@ -118,4 +118,14 @@ mh_strlen_zero(const char *s)
+     return !s || *s == '\0';
+ }
+ 
++/**
++ * Like strncpy(), but with less suck.
++ *
++ * Use like strncpy().  The differences are that it guarantees to terminate
++ * the output string and that it doesn't wastefully zero out the entire output
++ * buffer after the end of the string.
++ */
++char *
++mh_string_copy(char *dst, const char *src, size_t dst_len);
++
+ #endif
+diff --git a/src/lib/utilities.c b/src/lib/utilities.c
+index 68c6582..93f44a4 100644
+--- a/src/lib/utilities.c
++++ b/src/lib/utilities.c
+@@ -497,3 +497,24 @@ g_list_free_full (GList *list, GDestroyNotify free_func)
+     g_list_free (list);
+ }
+ #endif /* HAVE_G_LIST_FREE_FULL */
++
++char *
++mh_string_copy(char *dst, const char *src, size_t dst_len)
++{
++    char *ret = dst;
++    size_t orig_dst_len = dst_len;
++
++    while (*src && dst_len) {
++        *dst++ = *src++;
++        dst_len--;
++    }
++
++    if (orig_dst_len) {
++        if (!dst_len) {
++            dst--;
++        }
++        *dst = '\0';
++    }
++
++    return ret;
++}
+diff --git a/src/tests/CMakeLists.txt b/src/tests/CMakeLists.txt
+index 8fe81f2..331481b 100644
+--- a/src/tests/CMakeLists.txt
++++ b/src/tests/CMakeLists.txt
+@@ -6,12 +6,14 @@ if(CXXTEST_FOUND)
+    CXXTEST_ADD_TEST(mh_api_network_unittest network_unittest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/mh_api_network.h)
+    CXXTEST_ADD_TEST(mh_api_host_unittest host_unittest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/mh_api_host.h)
+    CXXTEST_ADD_TEST(mh_api_sysconfig_unittest sysconfig_unittest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/mh_api_sysconfig.h)
++   CXXTEST_ADD_TEST(mh_api_utilities_unittest utilities_unittest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/mh_api_utilities.h)
+    CXXTEST_ADD_TEST(mh_hsa_unittest hsa_unittest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/mh_hsa_${VARIANT}.h)
+    add_library(mh_tester SHARED test_utilities.c)
+    target_link_libraries(mh_tester ${pcre_LIBRARIES} mcommon mnetwork mhost msysconfig)
+    target_link_libraries(mh_api_network_unittest mh_tester)
+    target_link_libraries(mh_api_host_unittest mh_tester)
+    target_link_libraries(mh_api_sysconfig_unittest mh_tester)
++   target_link_libraries(mh_api_utilities_unittest mh_tester)
+    target_link_libraries(mh_hsa_unittest mh_tester)
+ endif(CXXTEST_FOUND)
+ 
+diff --git a/src/tests/mh_api_utilities.h b/src/tests/mh_api_utilities.h
+new file mode 100644
+index 0000000..c7e5b97
+--- /dev/null
++++ b/src/tests/mh_api_utilities.h
+@@ -0,0 +1,44 @@
++#ifndef __MH_API_UTILITIES_UNITTEST_H
++#define __MH_API_UTILITIES_UNITTEST_H
++
++#include <cstring>
++#include <cxxtest/TestSuite.h>
++
++extern "C" {
++#include "matahari/utilities.h"
++};
++
++using namespace std;
++
++class MhApiUtilitiesSuite : public CxxTest::TestSuite
++{
++public:
++    void testStrlenZero(void)
++    {
++        TS_ASSERT(mh_strlen_zero("foo") == 0);
++        TS_ASSERT(mh_strlen_zero("") != 0);
++        TS_ASSERT(mh_strlen_zero(NULL) != 0);
++    }
++
++    void testCopyString(void)
++    {
++        char out[8] = "abc";
++
++        mh_string_copy(out, "x", 0);
++        TS_ASSERT(strcmp(out, "abc") == 0);
++
++        mh_string_copy(out, "", sizeof(out));
++        TS_ASSERT(out[0] == '\0');
++        TS_ASSERT(out[1] == 'b');
++
++        mh_string_copy(out, "z", sizeof(out));
++        TS_ASSERT(out[0] == 'z');
++        TS_ASSERT(out[1] == '\0');
++        TS_ASSERT(out[2] == 'c');
++
++        mh_string_copy(out, "1234567890", sizeof(out));
++        TS_ASSERT(strcmp(out, "1234567") == 0);
++    }
++};
++
++#endif

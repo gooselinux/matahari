@@ -1,0 +1,35 @@
+diff --git a/matahari.init.in b/matahari.init.in
+index cb215de..75f9739 100644
+--- a/matahari.init.in
++++ b/matahari.init.in
+@@ -42,11 +42,6 @@ start() {
+ 	MATAHARI_ARGS="--broker $MATAHARI_BROKER $MATAHARI_ARGS"
+     fi
+ 
+-    # Setup kerberos ticket renewal
+-    if [ -n "$KRB_RENEW" ]; then
+-        k5start $KRB_RENEW_ARGS $KRB_REALM
+-    fi
+-
+     daemon $PROCESS $MATAHARI_ARGS --daemon
+     RETVAL=$?
+     echo
+diff --git a/matahari.sysconf.in b/matahari.sysconf.in
+index bc25e73..a07b96e 100644
+--- a/matahari.sysconf.in
++++ b/matahari.sysconf.in
+@@ -19,14 +19,4 @@ MATAHARI_AGENT_ARGS="--reconnect=yes"
+ # Per console options
+ # sysconfig_CONSOLE_ARGS=...
+ 
+-# Security
+-# Kerberos
+ 
+-# Uncomment to enable auto-renew credentials
+-# KRB_RENEW=yes
+-
+-# Set custom application and arguments for renew process
+-# KRB_RENEW_ARGS="-f /etc/krb5.keytab -K 10 -l 10h"
+-
+-# Kerberos REALM
+-# KRB_REALM="qpidd/EXAMPLE.COM"

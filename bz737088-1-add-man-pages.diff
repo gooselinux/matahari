@@ -1,0 +1,150 @@
+diff --git a/src/broker/.gitignore b/src/broker/.gitignore
+new file mode 100644
+index 0000000..d9e1a4a
+--- /dev/null
++++ b/src/broker/.gitignore
+@@ -0,0 +1 @@
++!matahari-brokerd.8
+diff --git a/src/broker/CMakeLists.txt b/src/broker/CMakeLists.txt
+index 7b48387..d6e4728 100644
+--- a/src/broker/CMakeLists.txt
++++ b/src/broker/CMakeLists.txt
+@@ -11,6 +11,14 @@ if(NOT WIN32)
+ 
+     install(TARGETS ${BROKER_DAEMON} DESTINATION sbin)
+ 
++
++    SET(MAN_PAGE ${BROKER_DAEMON}.${AGENT_MAN_SECTION})
++    install(CODE "execute_process(COMMAND gzip
++        INPUT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/${MAN_PAGE}
++        OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/${MAN_PAGE}.gz)")
++    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${MAN_PAGE}.gz
++        DESTINATION share/man/man${AGENT_MAN_SECTION})
++
+ endif(NOT WIN32)
+ endif(WITH-QMF)
+ 
+diff --git a/src/broker/matahari-brokerd.8 b/src/broker/matahari-brokerd.8
+new file mode 100644
+index 0000000..a4d044f
+--- /dev/null
++++ b/src/broker/matahari-brokerd.8
+@@ -0,0 +1,46 @@
++.TH MATAHARI-BROKERD "8" "September 2011" "matahari-brokerd"
++
++.SH NAME
++matahari-brokerd - A message broker for the Matahari suite of remote agents
++
++.SH SYNOPSIS
++.B matahari-brokerd
++\fI<options>\fR
++
++.SH DESCRIPTION
++
++matahari-brokerd is a wrapper around
++.BR qpidd (1).
++It processes configuration from the environment
++and then runs qpidd.
++
++.SH OPTIONS
++All options accepted by
++.BR qpidd (1)
++are accepted by matahari-brokerd.
++
++.SH ENVIRONMENT
++.IP MATAHARI_PORT
++Sets the TCP port to listen on for connections. If this is not specified, the
++default port
++.B 49000
++will be used.
++
++.IP FEDERATED_BROKERS
++.RS
++A list of Qpid brokers to federate with. Brokers may be separated by spaces,
++commas and/or semicolons. There are two formats permitted, and the list may
++contain entries in both formats.
++.TP 8
++\fI<fqdn>\fR:\fI<port>\fR
++A hostname and TCP port for the remote broker.
++.TP
++_matahari._tcp.\fI<fqdn>\fR
++A DNS SRV query. Note that only the first (highest-priority) SRV record returned
++by the DNS for each given query will be used.
++.RE
++
++.IP QPID_\fI<option>\fR
++All environment variables supported by
++.BR qpidd (1)
++are also supported.
+diff --git a/src/cmake/modules/MatahariMacros.cmake b/src/cmake/modules/MatahariMacros.cmake
+index 720d03c..e051b2b 100644
+--- a/src/cmake/modules/MatahariMacros.cmake
++++ b/src/cmake/modules/MatahariMacros.cmake
+@@ -103,12 +103,13 @@ endmacro(check_policies_for_schema)
+ macro(create_manpage BINARY SECTION DESC)
+     if(HELP2MAN)
+         add_custom_command(
+-	    TARGET ${BINARY}
+-	    POST_BUILD
+-            COMMAND ${HELP2MAN} --output ${BINARY}.${SECTION} --no-info --section ${SECTION} --name ${DESC} ${CMAKE_CURRENT_BINARY_DIR}/${BINARY}
++            TARGET ${BINARY}
++            POST_BUILD
++            COMMAND ${HELP2MAN} --no-info --section ${SECTION} --name ${DESC} ${CMAKE_CURRENT_BINARY_DIR}/${BINARY} | gzip > ${BINARY}.${SECTION}.gz 
+             COMMENT "Generating ${BINARY} man page"
+             VERBATIM
+         )
++    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${BINARY}.${SECTION}.gz DESTINATION share/man/man${SECTION})
+     endif(HELP2MAN)
+ endmacro(create_manpage)
+ 
+diff --git a/src/lib/mh_agent.cpp b/src/lib/mh_agent.cpp
+index 7edb217..bb1a9b6 100644
+--- a/src/lib/mh_agent.cpp
++++ b/src/lib/mh_agent.cpp
+@@ -226,17 +226,19 @@ connection_option(int code, const char *name, const char *arg, void *userdata)
+ int print_help(int code, const char *name, const char *arg, void *userdata)
+ {
+     int lpc = 0;
+-    printf("Usage:\tmatahari-%sd <options>\n", (char *)userdata);
++
++    printf("matahari-%sd <options>\n", (const char *) userdata);
+ 
+     printf("\nOptions:\n");
+     printf("\t-h | --help             print this help message.\n");
+-    for(lpc = 0; lpc < DIMOF(matahari_options); lpc++) {
+-        if(matahari_options[lpc].callback
++    for (lpc = 0; lpc < DIMOF(matahari_options); lpc++) {
++        if (matahari_options[lpc].callback
+             && matahari_options[lpc].callback != connection_option) {
+             printf("\t-%c | --%-10s\t%s\n", matahari_options[lpc].code,
+                    matahari_options[lpc].long_name, matahari_options[lpc].description);
+         }
+     }
++
+     return 0;
+ }
+ 
+diff --git a/src/service/CMakeLists.txt b/src/service/CMakeLists.txt
+index 72c948e..586ed68 100644
+--- a/src/service/CMakeLists.txt
++++ b/src/service/CMakeLists.txt
+@@ -17,6 +17,7 @@ if(WITH-QMF)
+     target_link_libraries(${QMF_CONSOLE} mcommon_qmf)
+ 
+     create_manpage(${QMF_AGENT} ${AGENT_MAN_SECTION} ${AGENT_MAN_DESC})
++    create_manpage(${QMF_CONSOLE} ${CONSOLE_MAN_SECTION} ${CONSOLE_MAN_DESC})
+     create_service_scripts(${BASE})
+ 
+     install(TARGETS ${QMF_AGENT} DESTINATION sbin)
+diff --git a/src/sysconfig/CMakeLists.txt b/src/sysconfig/CMakeLists.txt
+index e8eda56..61db973 100644
+--- a/src/sysconfig/CMakeLists.txt
++++ b/src/sysconfig/CMakeLists.txt
+@@ -16,6 +16,7 @@ if(WITH-QMF)
+     target_link_libraries(${QMF_CONSOLE} mcommon_qmf)
+ 
+     create_manpage(${QMF_AGENT} ${AGENT_MAN_SECTION} ${AGENT_MAN_DESC})
++    create_manpage(${QMF_CONSOLE} ${CONSOLE_MAN_SECTION} ${CONSOLE_MAN_DESC})
+     create_service_scripts(${BASE})
+ 
+     set(BASE_SUB "-console")

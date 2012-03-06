@@ -1,0 +1,1026 @@
+diff --git a/src/include/matahari/services.h b/src/include/matahari/services.h
+index ca79a11..e48da77 100644
+--- a/src/include/matahari/services.h
++++ b/src/include/matahari/services.h
+@@ -188,11 +188,37 @@ extern svc_action_t *resources_action_create(
+     const char *name, const char *standard, const char *provider, const char *agent,
+     const char *action, int interval /* ms */, int timeout /* ms */, GHashTable *params);
+ 
++/**
++ * Utilize services API to execute an arbitrary command.
++ *
++ * This API has useful infrastructure in place to be able to run a command
++ * in the background and get notified via a callback when the command finishes.
++ *
++ * \param[in] exec command to execute
++ * \param[in] args arguments to the command, NULL terminated
++ *
++ * \return a svc_action_t object, used to pass to the execute function
++ * (services_action_sync() or services_action_async()) and is
++ * provided to the callback.
++ */
++svc_action_t *
++mh_services_action_create_generic(const char *exec, const char *args[]);
++
+ extern void services_action_free(svc_action_t *op);
+ 
+ extern gboolean services_action_sync(svc_action_t *op);
+-extern gboolean services_action_async(svc_action_t *op,
+-                                      void (*action_callback)(svc_action_t *));
++
++/**
++ * Run an action asynchronously.
++ *
++ * \param[in] op services action data
++ * \param[in] action_callback callback for when the action completes
++ *
++ * \retval TRUE succesfully started execution
++ * \retval FALSE failed to start execution, no callback will be received
++ */
++extern gboolean
++services_action_async(svc_action_t *op, void (*action_callback)(svc_action_t *));
+ 
+ extern gboolean services_action_cancel(const char *name, const char *action,
+                                        int interval);
+diff --git a/src/include/matahari/sysconfig.h b/src/include/matahari/sysconfig.h
+index c0e8bff..a5bfd04 100644
+--- a/src/include/matahari/sysconfig.h
++++ b/src/include/matahari/sysconfig.h
+@@ -1,5 +1,6 @@
+ /* sysconfig.h - Copyright (C) 2011 Red Hat, Inc.
+  * Written by Adam Stokes <astokes@fedoraproject.org>
++ * Written by Russell Bryant <rbryant@redhat.com>
+  *
+  * This program is free software; you can redistribute it and/or
+  * modify it under the terms of the GNU General Public
+@@ -27,10 +28,19 @@
+ 
+ #include <stdint.h>
+ #include <glib.h>
++
+ /*! Supported FLAGS */
+ #define MH_SYSCONFIG_FLAG_FORCE    (1 << 0)
+ 
+ /**
++ * Callback for run_uri or run_string requests.
++ *
++ * \param[in] data cb_data provided with a run_string or run_uri request
++ * \param[in] res exit code from executed request
++ */
++typedef void (*mh_sysconfig_result_cb)(void *data, int res);
++
++/**
+  * Download and process URI for configuration
+  *
+  * \param[in] uri the url of configuration item
+@@ -38,12 +48,17 @@
+  * \param[in] scheme the type of configuration i.e. puppet
+  * \param[in] key configuration key for keeping track of existing
+  *            configuration runs
++ * \param[in] result_cb This request may have to be executed asynchronously.  If this
++ *            function returns success (0), then this result callback will be called with the
++ *            final result of the request.
++ * \param[in] cb_data custom data to be passed to the result callback.
+  *
+- * \retval 0 for success
+- * \retval-1 for failure
++ * \retval  0 for success
++ * \retval -1 for failure
+  */
+ extern int
+-mh_sysconfig_run_uri(const char *uri, uint32_t flags, const char *scheme, const char *key);
++mh_sysconfig_run_uri(const char *uri, uint32_t flags, const char *scheme, const char *key,
++                     mh_sysconfig_result_cb result_cb, void *cb_data);
+ 
+ /**
+  * Process a text blob
+@@ -53,13 +68,18 @@ mh_sysconfig_run_uri(const char *uri, uint32_t flags, const char *scheme, const
+  * \param[in] scheme the type of configuration i.e. puppet
+  * \param[in] key configuration key for keeping track of existing
+  *            configuration runs
++ * \param[in] result_cb This request may have to be executed asynchronously.  If this
++ *            function returns success (0), then this result callback will be called with the
++ *            final result of the request.
++ * \param[in] cb_data custom data to be passed to the result callback.
+  *
+- * \retval 0 for success
+- * \retval-1 for failure
++ * \retval  0 for success
++ * \retval -1 for failure
+   */
+ extern int
+ mh_sysconfig_run_string(const char *string, uint32_t flags, const char *scheme,
+-        const char *key);
++                        const char *key, mh_sysconfig_result_cb result_cb,
++                        void *cb_data);
+ 
+ /**
+  * Query against a configuration object on the system
+@@ -97,19 +117,4 @@ mh_sysconfig_set_configured(const char *key, const char *contents);
+ extern char *
+ mh_sysconfig_is_configured(const char *key);
+ 
+-/**
+- * Set the directory used to store data about keys
+- *
+- * This is primarily intended to be used in unit test code.  It should not
+- * be needed by any production usage of this library.
+- *
+- * \param[in] path directory to store key info
+- *
+- * \note The return of this routine must be freed with free()
+- *
+- * \return nothing
+- */
+-extern void
+-mh_sysconfig_keys_dir_set(const char *path);
+-
+ #endif // __MH_SYSCONFIG_H__
+diff --git a/src/include/matahari/sysconfig_internal.h b/src/include/matahari/sysconfig_internal.h
+new file mode 100644
+index 0000000..48879ad
+--- /dev/null
++++ b/src/include/matahari/sysconfig_internal.h
+@@ -0,0 +1,47 @@
++/* sysconfig_internal.h - Copyright (C) 2011 Red Hat, Inc.
++ * Written by Russell Bryant <rbryant@redhat.com>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This software is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++
++/**
++ * \file
++ * \brief Sysconfig private functions
++ *
++ * The functions in this file are exposed for the purposes of using them
++ * from unit tests.  They're not intended to be used as a part of the
++ * public API.  If you have a reason to use these, please contact the
++ * maintainers of the Matahari project.
++ */
++
++#ifndef __MH_SYSCONFIG_INTERNAL_H__
++#define __MH_SYSCONFIG_INTERNAL_H__
++
++/**
++ * Set the directory used to store data about keys
++ *
++ * This is primarily intended to be used in unit test code.  It should not
++ * be needed by any production usage of this library.
++ *
++ * \param[in] path directory to store key info
++ *
++ * \note The return of this routine must be freed with free()
++ *
++ * \return nothing
++ */
++extern void
++mh_sysconfig_keys_dir_set(const char *path);
++
++#endif /* __MH_SYSCONFIG_INTERNAL_H__ */
+diff --git a/src/lib/CMakeLists.txt b/src/lib/CMakeLists.txt
+index 610040f..4b2326c 100644
+--- a/src/lib/CMakeLists.txt
++++ b/src/lib/CMakeLists.txt
+@@ -28,7 +28,7 @@ target_link_libraries(mservice ${pcre_LIBRARIES} mcommon ${SIGAR} ${glib_LIBRARI
+ 
+ add_library (msysconfig SHARED sysconfig.c sysconfig_${VARIANT}.c)
+ set_target_properties(msysconfig PROPERTIES SOVERSION 1.0.0)
+-target_link_libraries(msysconfig ${pcre_LIBRARIES} mcommon ${glib_LIBRARIES})
++target_link_libraries(msysconfig ${pcre_LIBRARIES} mcommon mservice ${glib_LIBRARIES})
+ 
+ if(WIN32)
+     foreach (lib ${LIBS})
+diff --git a/src/lib/services.c b/src/lib/services.c
+index a62fff2..ad08ee6 100644
+--- a/src/lib/services.c
++++ b/src/lib/services.c
+@@ -115,9 +115,35 @@ svc_action_t *resources_action_create(
+     return op;
+ }
+ 
++svc_action_t *
++mh_services_action_create_generic(const char *exec, const char *args[])
++{
++    svc_action_t *op;
++    unsigned int cur_arg;
++
++    op = calloc(1, sizeof(*op));
++    op->opaque = calloc(1, sizeof(svc_action_private_t));
++
++    op->opaque->exec = strdup(exec);
++    op->opaque->args[0] = strdup(exec);
++
++    for (cur_arg = 1; args && args[cur_arg - 1]; cur_arg++) {
++        op->opaque->args[cur_arg] = strdup(args[cur_arg - 1]);
++
++        if (cur_arg == DIMOF(op->opaque->args) - 1) {
++            mh_err("svc_action_t args list not long enough for '%s' execution request.", exec);
++            break;
++        }
++    }
++
++    return op;
++}
++
+ void
+ services_action_free(svc_action_t *op)
+ {
++    unsigned int i;
++
+     if (op == NULL) {
+         return;
+     }
+@@ -135,10 +161,9 @@ services_action_free(svc_action_t *op)
+     free(op->id);
+     free(op->opaque->exec);
+ 
+-    free(op->opaque->args[0]);
+-    free(op->opaque->args[1]);
+-    free(op->opaque->args[2]);
+-    free(op->opaque->args[3]);
++    for (i = 0; i < DIMOF(op->opaque->args); i++) {
++        free(op->opaque->args[i]);
++    }
+ 
+     free(op->rsc);
+     free(op->action);
+diff --git a/src/lib/services_linux.c b/src/lib/services_linux.c
+index fa9eb5d..a9aff53 100644
+--- a/src/lib/services_linux.c
++++ b/src/lib/services_linux.c
+@@ -56,6 +56,8 @@ read_output(int fd, gpointer user_data)
+     char buf[500];
+     static const size_t buf_read_len = sizeof(buf) - 1;
+ 
++    mh_trace("%p", op);
++
+     if (fd == op->opaque->stderr_fd) {
+         is_err = TRUE;
+         if (op->stderr_data) {
+@@ -98,6 +100,9 @@ static void
+ pipe_out_done(gpointer user_data)
+ {
+     svc_action_t* op = (svc_action_t *) user_data;
++
++    mh_trace("%p", op);
++
+     op->opaque->stdout_gsource = NULL;
+     if (op->opaque->stdout_fd > STDERR_FILENO) {
+         close(op->opaque->stdout_fd);
+@@ -136,7 +141,7 @@ set_ocf_env_with_prefix(gpointer key, gpointer value, gpointer user_data)
+ static void
+ add_OCF_env_vars(svc_action_t *op)
+ {
+-    if (strcmp("ocf", op->standard) != 0) {
++    if (!op->standard || strcmp("ocf", op->standard) != 0) {
+         return;
+     }
+ 
+diff --git a/src/lib/sysconfig.c b/src/lib/sysconfig.c
+index de47481..d620f52 100644
+--- a/src/lib/sysconfig.c
++++ b/src/lib/sysconfig.c
+@@ -26,8 +26,9 @@
+ #include <glib/gprintf.h>
+ 
+ #include "matahari/logging.h"
+-#include "matahari/sysconfig.h"
+ #include "matahari/utilities.h"
++#include "matahari/sysconfig.h"
++#include "matahari/sysconfig_internal.h"
+ #include "sysconfig_private.h"
+ 
+ MH_TRACE_INIT_DATA(mh_sysconfig);
+@@ -68,11 +69,17 @@ set_key(const char *key, const char *contents)
+ {
+     char key_file[PATH_MAX];
+ 
++    if (mh_strlen_zero(key)) {
++        mh_err("key cannot be empty");
++        return -1;
++    }
++
+     g_snprintf(key_file, sizeof(key_file), "%s%s", keys_dir_get(), key);
+     if (!g_file_set_contents(key_file, contents, strlen(contents), NULL)) {
+         mh_err("Could not set file %s", key_file);
+         return FALSE;
+     }
++
+     return TRUE;
+ }
+ 
+@@ -83,12 +90,18 @@ get_key(const char *key)
+     char *contents = NULL;
+     size_t length;
+ 
++    if (mh_strlen_zero(key)) {
++        mh_err("key cannot be empty");
++        return NULL;
++    }
++
+     g_snprintf(key_file, sizeof(key_file), "%s%s", keys_dir_get(), key);
+     if (g_file_test(key_file, G_FILE_TEST_EXISTS)) {
+-        if(g_file_get_contents(key_file, &contents, &length, NULL)) {
++        if (g_file_get_contents(key_file, &contents, &length, NULL)) {
+             return contents;
+         }
+     }
++
+     return contents;
+ }
+ 
+@@ -98,6 +111,7 @@ mh_sysconfig_set_configured(const char *key, const char *contents)
+     if (!set_key(key, contents)) {
+         return FALSE;
+     }
++
+     return TRUE;
+ }
+ 
+@@ -108,18 +122,32 @@ mh_sysconfig_is_configured(const char *key)
+ }
+ 
+ int
+-mh_sysconfig_run_uri(const char *uri, uint32_t flags, const char *scheme,
+-        const char *key) {
+-    return sysconfig_os_run_uri(uri, flags, scheme, key);
++mh_sysconfig_run_uri(const char *uri, uint32_t flags, const char *scheme, const char *key,
++                     mh_sysconfig_result_cb result_cb, void *cb_data)
++{
++    if (mh_strlen_zero(key)) {
++        mh_err("key cannot be empty");
++        return -1;
++    }
++
++    return sysconfig_os_run_uri(uri, flags, scheme, key, result_cb, cb_data);
+ }
+ 
+ int
+ mh_sysconfig_run_string(const char *string, uint32_t flags, const char *scheme,
+-        const char *key) {
+-    return sysconfig_os_run_string(string, flags, scheme, key);
++                        const char *key, mh_sysconfig_result_cb result_cb,
++                        void *cb_data)
++{
++    if (mh_strlen_zero(key)) {
++        mh_err("key cannot be empty");
++        return -1;
++    }
++
++    return sysconfig_os_run_string(string, flags, scheme, key, result_cb, cb_data);
+ }
+ 
+ const char *
+-mh_sysconfig_query(const char *query, uint32_t flags, const char *scheme) {
++mh_sysconfig_query(const char *query, uint32_t flags, const char *scheme)
++{
+     return sysconfig_os_query(query, flags, scheme);
+ }
+diff --git a/src/lib/sysconfig_linux.c b/src/lib/sysconfig_linux.c
+index e039b37..571d05a 100644
+--- a/src/lib/sysconfig_linux.c
++++ b/src/lib/sysconfig_linux.c
+@@ -27,95 +27,275 @@
+ #include <unistd.h>
+ #include <glib.h>
+ #include <curl/curl.h>
++
+ #include "matahari/logging.h"
+-#include "matahari/sysconfig.h"
+ #include "matahari/utilities.h"
++#include "matahari/services.h"
++#include "matahari/sysconfig.h"
+ #include "sysconfig_private.h"
+ 
+-
+ MH_TRACE_INIT_DATA(mh_sysconfig);
+ 
++struct action_data {
++    char *key;
++    char *filename;
++    mh_sysconfig_result_cb result_cb;
++    void *cb_data;
++};
++
++static void
++action_data_free(struct action_data *action_data)
++{
++    free(action_data->key);
++    free(action_data->filename);
++    free(action_data);
++}
++
++/**
++ * \internal
++ * \note This function is not thread-safe.
++ */
+ static int
+ sysconfig_os_download(const char *uri, FILE *fp)
+ {
+     CURL *curl;
+-    CURLcode res;
++    CURLcode curl_res;
++    long response = 0;
++    int res = 0;
++    static int curl_init = 0;
+ 
+-    curl_global_init(CURL_GLOBAL_DEFAULT);
+-    curl = curl_easy_init();
+-    if (curl) {
+-        curl_easy_setopt(curl, CURLOPT_URL, uri);
+-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+-        res = curl_easy_perform(curl);
++    if (!curl_init) {
++        curl_res = curl_global_init(CURL_GLOBAL_DEFAULT);
+ 
+-        if (CURLE_OK != res) {
++        if (curl_res != CURLE_OK) {
++            mh_err("curl_global_init failed: %d", curl_res);
+             return -1;
+         }
+-        curl_easy_cleanup(curl);
++
++        curl_init = 1;
+     }
+-    curl_global_cleanup();
+-    return 0;
++
++    if (!(curl = curl_easy_init())) {
++        return -1;
++    }
++
++    curl_res = curl_easy_setopt(curl, CURLOPT_URL, uri);
++    if (curl_res != CURLE_OK) {
++        mh_warn("curl_easy_setopt of URI '%s' failed. (%d)", uri, curl_res);
++        res = -1;
++        goto return_cleanup;
++    }
++
++    curl_res = curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
++    if (curl_res != CURLE_OK) {
++        mh_warn("curl_easy_setopt of WRITEDATA '%p' failed. (%d)", fp, curl_res);
++        res = -1;
++        goto return_cleanup;
++    }
++
++    curl_res = curl_easy_perform(curl);
++    if (curl_res != CURLE_OK) {
++        mh_warn("curl request for URI '%s' failed. (%d)", uri, curl_res);
++        res = -1;
++        goto return_cleanup;
++    }
++
++    if (!strncasecmp(uri, "http", 4) || !strncasecmp(uri, "ftp", 3)) {
++        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response);
++        if (curl_res != CURLE_OK) {
++            mh_warn("curl_easy_getinfo for RESPONSE_CODE failed. (%d)", curl_res);
++            res = -1;
++            goto return_cleanup;
++        }
++        if (response < 200 || response > 299) {
++            mh_warn("curl request for URI '%s' got response %ld", uri, response);
++            res = -1;
++        }
++    }
++
++return_cleanup:
++    curl_easy_cleanup(curl);
++
++    return res;
+ }
+ 
++static void
++action_cb(svc_action_t *action)
++{
++    struct action_data *action_data = action->cb_data;
++    char buf[32] = "OK";
++
++    if (action->rc) {
++        snprintf(buf, sizeof(buf), "FAILED\n%d", action->rc);
++    }
++
++    if (mh_sysconfig_set_configured(action_data->key, buf) == FALSE) {
++        mh_err("Unable to write to key file '%s'", action_data->key);
++    }
++
++    action_data->result_cb(action_data->cb_data, action->rc);
++
++    unlink(action_data->filename);
++
++    action_data_free(action_data);
++    action->cb_data = NULL;
++}
+ 
++/**
++ * \internal
++ * \brief Check the installed version of puppet.
++ *
++ * \param[out] use_apply whether to use "puppet <foo>" or "puppet apply <foo>"
++ *
++ * \retval 0 success
++ * \retval -1 failed to find puppet at all
++ */
+ static int
+-sysconfig_os_run_puppet(const char *uri, const char *data, const char *key)
++check_puppet(int *use_apply)
+ {
+-    gboolean ret;
++    gboolean spawn_res;
++    gchar *argv[] = {
++        "puppet", "--version", NULL,
++    };
++    gchar *out = NULL;
++    gchar *out_copy = NULL;
+     GError *error = NULL;
+-    char fmt_error[1024];
+-    gchar *cmd[4];
++    char *dot;
++    int res = 0;
++    unsigned int major;
++
++    spawn_res = g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
++                             &out, NULL, NULL, &error);
++
++    if (spawn_res == FALSE) {
++        mh_err("Failed to check puppet version: (%d) %s", error->code, error->message);
++        g_error_free(error);
++        return -1;
++    }
++
++    out_copy = g_strdup(out);
++
++    if (!(dot = strchr(out_copy, '.'))) {
++        mh_err("Unexpected output from 'puppet --version': '%s'", out);
++        res = -1;
++        goto return_cleanup;
++    }
++
++    *dot = '\0';
++
++    if (sscanf(out_copy, "%u", &major) != 1) {
++        mh_err("Failed to parse outpuet from 'puppet --version': '%s'", out);
++        res = -1;
++    }
++
++    *use_apply = (major >= 2) ? 1 : 0;
++
++return_cleanup:
++    g_free(out);
++    g_free(out_copy);
++
++    return res;
++}
++
++static int
++run_puppet(const char *uri, const char *data, const char *key,
++           mh_sysconfig_result_cb result_cb, void *cb_data)
++{
++    const char *args[3];
+     char filename[PATH_MAX];
+-    int fd;
+-    FILE *fp;
++    svc_action_t *action = NULL;
++    struct action_data *action_data = NULL;
++    int use_apply = 0;
++
++    if (check_puppet(&use_apply)) {
++        return -1;
++    }
++
++    if (uri) {
++        int fd;
++        FILE *fp;
+ 
+-    if (uri != NULL) {
+         snprintf(filename, sizeof(filename), "%s", "puppet_conf_XXXXXX");
++
+         fd = mkstemp(filename);
+         if (fd < 0) {
+             return -1;
+         }
++
+         fp = fdopen(fd, "w+b");
+         if (fp == NULL) {
+             close(fd);
++            unlink(filename);
+             return -1;
+         }
++
+         if ((sysconfig_os_download(uri, fp)) != 0) {
+             fclose(fp);
++            unlink(filename);
+             return -1;
+         }
++
+         fclose(fp);
+-    } else if (data != NULL) {
+-        snprintf(filename, sizeof(filename), "%s", "puppet_conf_blob");
++    } else if (data) {
++        snprintf(filename, sizeof(filename), "puppet_conf_%u", g_random_int());
+         g_file_set_contents(filename, data, strlen(data), NULL);
+     } else {
+         return -1;
+     }
+ 
+-    cmd[0] = "puppet";
+-    cmd[1] = "apply";
+-    cmd[2] = filename;
+-    cmd[3] = NULL;
+-    mh_info("Running %s %s", cmd[0], cmd[1]);
+-    ret = g_spawn_async(NULL, cmd, NULL, G_SPAWN_SEARCH_PATH,
+-            NULL, NULL, NULL, &error);
+-    if (ret == FALSE) {
+-        snprintf(fmt_error, sizeof(fmt_error), "ERROR\n%s", error->message);
+-        if (mh_sysconfig_set_configured(key, fmt_error) == FALSE) {
+-            mh_err("Unable to write to file.");
+-        }
+-        g_error_free(error);
+-        return -1;
++    if (use_apply) {
++        args[0] = "apply";
++        args[1] = filename;
++        args[2] = NULL;
++    } else {
++        args[0] = filename;
++        args[1] = NULL;
+     }
+-    if (mh_sysconfig_set_configured(key, "OK") == FALSE) {
+-        mh_err("Unable to write to file.");
+-        return -1;
++
++    if (!(action = mh_services_action_create_generic("puppet", args))) {
++        goto return_failure;
+     }
++
++    action_data = calloc(1, sizeof(*action_data));
++    action_data->key = strdup(key);
++    action_data->filename = strdup(filename);
++    action_data->result_cb = result_cb;
++    action_data->cb_data = cb_data;
++
++    action->cb_data = action_data;
++    action->id = strdup("puppet");
++
++    mh_info("Running puppet %s%s", use_apply ? "apply " : "", filename);
++
++    if (services_action_async(action, action_cb) == FALSE) {
++        goto return_failure;
++    }
++
+     return 0;
++
++return_failure:
++    if (action) {
++        services_action_free(action);
++        action = NULL;
++    }
++
++    if (action_data) {
++        action_data_free(action_data);
++        action_data = NULL;
++    }
++
++    if (mh_sysconfig_set_configured(key, "ERROR") == FALSE) {
++        mh_err("Unable to write to file.");
++    }
++
++    unlink(filename);
++
++    return -1;
+ }
+ 
+ static int
+-sysconfig_os_run_augeas(const char *query, const char *data, const char *key)
++run_augeas(const char *query, const char *data, const char *key,
++           mh_sysconfig_result_cb result_cb, void *cb_data)
+ {
+     mh_warn("not implemented\n");
+     return -1;
+@@ -131,35 +311,37 @@ sysconfig_os_query_augeas(const char *query)
+ 
+ int
+ sysconfig_os_run_uri(const char *uri, uint32_t flags, const char *scheme,
+-        const char *key)
++        const char *key, mh_sysconfig_result_cb result_cb, void *cb_data)
+ {
+     int rc = 0;
+ 
+     if (mh_sysconfig_is_configured(key) == FALSE || (flags & MH_SYSCONFIG_FLAG_FORCE)) {
+         if (strcasecmp(scheme, "puppet") == 0) {
+-            rc = sysconfig_os_run_puppet(uri, NULL, key);
++            rc = run_puppet(uri, NULL, key, result_cb, cb_data);
+         } else if (strcasecmp(scheme, "augeas") == 0) {
+-            rc = sysconfig_os_run_augeas(uri, NULL, key);
++            rc = run_augeas(uri, NULL, key, result_cb, cb_data);
+         } else {
+             rc = -1;
+         }
+     }
++
+     return rc;
+ }
+ 
+ int
+-sysconfig_os_run_string(const char *data, uint32_t flags, const char *scheme,
+-        const char *key)
++sysconfig_os_run_string(const char *string, uint32_t flags, const char *scheme,
++        const char *key, mh_sysconfig_result_cb result_cb, void *cb_data)
+ {
+     int rc = 0;
+ 
+     if (mh_sysconfig_is_configured(key) == FALSE || (flags & MH_SYSCONFIG_FLAG_FORCE)) {
+         if (strcasecmp(scheme, "puppet") == 0) {
+-            rc = sysconfig_os_run_puppet(NULL, data, key);
++            rc = run_puppet(NULL, string, key, result_cb, cb_data);
+         } else {
+             rc = -1;
+         }
+     }
++
+     return rc;
+ }
+ 
+diff --git a/src/lib/sysconfig_private.h b/src/lib/sysconfig_private.h
+index f521ad4..36dc554 100644
+--- a/src/lib/sysconfig_private.h
++++ b/src/lib/sysconfig_private.h
+@@ -21,11 +21,11 @@
+ 
+ extern int
+ sysconfig_os_run_uri(const char *uri, uint32_t flags, const char *scheme,
+-        const char *key);
++        const char *key, mh_sysconfig_result_cb result_cb, void *cb_data);
+ 
+ extern int
+ sysconfig_os_run_string(const char *string, uint32_t flags, const char *scheme,
+-        const char *key);
++        const char *key, mh_sysconfig_result_cb result_cb, void *cb_data);
+ 
+ extern const char *
+ sysconfig_os_query(const char *query, uint32_t flags, const char *scheme);
+diff --git a/src/lib/sysconfig_windows.c b/src/lib/sysconfig_windows.c
+index 2b272e4..29b630a 100644
+--- a/src/lib/sysconfig_windows.c
++++ b/src/lib/sysconfig_windows.c
+@@ -1,5 +1,6 @@
+ /* sysconfig_windows.c - Copyright (C) 2011 Red Hat, Inc.
+  * Written by Adam Stokes <astokes@fedoraproject.org>
++ * Written by Russell Bryant <rbryant@redhat.com>
+  *
+  * This program is free software; you can redistribute it and/or
+  * modify it under the terms of the GNU General Public
+@@ -26,44 +27,57 @@
+ MH_TRACE_INIT_DATA(mh_sysconfig);
+ 
+ static int
+-sysconfig_os_run_regedit(char *registry_file)
++run_regedit(char *registry_file)
+ {
+-    gchar *cmd[4];
++    gchar *cmd[] = {
++        "REGEDIT",
++        "/S",
++        registry_file,
++        NULL,
++    };
+     gboolean ret;
+     GError *error = NULL;
++    gint res = 0;
+ 
+-    cmd[0] = "REGEDIT";
+-    cmd[1] = "/S";
+-    cmd[2] = registry_file;
+-    cmd[3] = NULL;
++    ret = g_spawn_sync(NULL, cmd, NULL, G_SPAWN_SEARCH_PATH,
++            NULL, NULL, NULL, &res, &error);
+ 
+-    ret = g_spawn_async(NULL, cmd, NULL, G_SPAWN_SEARCH_PATH,
+-            NULL, NULL, NULL, &error);
+     if (ret == FALSE) {
+         g_error_free(error);
+         return -1;
+     }
+-    return 0;
++
++    return res;
+ }
+ 
+ int
+ sysconfig_os_run_uri(const char *uri, uint32_t flags, const char *scheme,
+-        const char *key)
++        const char *key, mh_sysconfig_result_cb result_cb, void *cb_data)
+ {
+-    return 0;
++    return -1;
+ }
+ 
+ int
+-sysconfig_os_run_string(const char *data, uint32_t flags, const char *scheme,
+-        const char *key)
++sysconfig_os_run_string(const char *string, uint32_t flags, const char *scheme,
++        const char *key, mh_sysconfig_result_cb result_cb, void *cb_data);
+ {
+-    char filename[PATH_MAX];
+-    g_snprintf(filename, sizeof(filename), "%s\\%s.REG", g_getenv("TEMP"), key);
+-    if (strcasecmp(scheme, "registry") == 0 ) {
+-            g_file_set_contents(filename, data, strlen(data), NULL);
+-            return sysconfig_os_run_regedit(filename);
++    if (!strcasecmp(scheme, "registry")) {
++        char filename[PATH_MAX];
++        int res;
++
++        g_snprintf(filename, sizeof(filename), "%s\\%s.REG", g_getenv("TEMP"), key);
++        g_file_set_contents(filename, data, strlen(data), NULL);
++
++        res = run_regedit(filename);
++
++        if (!res) {
++            result_cb(cb_data, res);
++        }
++
++        return res;
+     }
+-    return 0;
++
++    return -1;
+ }
+ 
+ const char *
+diff --git a/src/sysconfig/sysconfig-qmf.cpp b/src/sysconfig/sysconfig-qmf.cpp
+index a02a018..31f7a50 100644
+--- a/src/sysconfig/sysconfig-qmf.cpp
++++ b/src/sysconfig/sysconfig-qmf.cpp
+@@ -50,12 +50,31 @@ public:
+ 
+ const char ConfigAgent::SYSCONFIG_NAME[] = "Sysconfig";
+ 
++class AsyncCB
++{
++public:
++    AsyncCB(const std::string& _key, qmf::AgentEvent& _event,
++            qmf::AgentSession& _session) :
++                    key(_key), event(_event), session(_session) {}
++    ~AsyncCB() {}
++
++    static void result_cb(void *cb_data, int res);
++
++private:
++    std::string key;
++    /** The method call that initiated this async action */
++    qmf::AgentEvent event;
++    /** The QMF session that initiated this async action */
++    qmf::AgentSession session;
++};
++
+ int
+ main(int argc, char **argv)
+ {
+     ConfigAgent agent;
+     int rc = agent.init(argc, argv, "Sysconfig");
+     if (rc == 0) {
++        mainloop_track_children(G_PRIORITY_DEFAULT);
+         agent.run();
+     }
+     return rc;
+@@ -75,10 +94,26 @@ ConfigAgent::setup(qmf::AgentSession session)
+     return 0;
+ }
+ 
++void
++AsyncCB::result_cb(void *cb_data, int res)
++{
++    AsyncCB *action_data = static_cast<AsyncCB *>(cb_data);
++    char *status;
++
++    status = mh_sysconfig_is_configured(action_data->key.c_str());
++    action_data->event.addReturnArgument("status", status ? status : "unknown");
++
++    action_data->session.methodSuccess(action_data->event);
++
++    free(status);
++    delete action_data;
++}
++
+ gboolean
+ ConfigAgent::invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data)
+ {
+     char *status = NULL;
++    bool async = false;
+ 
+     const std::string& methodName(event.getMethodName());
+     if (event.getType() != qmf::AGENT_METHOD) {
+@@ -88,19 +123,37 @@ ConfigAgent::invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer u
+     qpid::types::Variant::Map& args = event.getArguments();
+ 
+     if (methodName == "run_uri") {
+-        mh_sysconfig_run_uri(args["uri"].asString().c_str(),
++        AsyncCB *action_data = new AsyncCB(args["key"].asString(), event, session);
++        int res;
++
++        res = mh_sysconfig_run_uri(args["uri"].asString().c_str(),
+             args["flags"].asUint32(),
+             args["scheme"].asString().c_str(),
+-            args["key"].asString().c_str());
+-        status = mh_sysconfig_is_configured(args["key"].asString().c_str());
+-        event.addReturnArgument("status", status ? status : "unknown");
++            args["key"].asString().c_str(), AsyncCB::result_cb, action_data);
++
++        if (res) {
++            session.raiseException(event, MH_INVALID_ARGS);
++            delete action_data;
++            goto bail;
++        } else {
++            async = true;
++        }
+     } else if (methodName == "run_string") {
+-        mh_sysconfig_run_string(args["text"].asString().c_str(),
++        AsyncCB *action_data = new AsyncCB(args["key"].asString(), event, session);
++        int res;
++
++        res = mh_sysconfig_run_string(args["text"].asString().c_str(),
+             args["flags"].asUint32(),
+             args["scheme"].asString().c_str(),
+-            args["key"].asString().c_str());
+-        status = mh_sysconfig_is_configured(args["key"].asString().c_str());
+-        event.addReturnArgument("status", status ? status : "unknown");
++            args["key"].asString().c_str(), AsyncCB::result_cb, action_data);
++
++        if (res) {
++            session.raiseException(event, MH_INVALID_ARGS);
++            delete action_data;
++            goto bail;
++        } else {
++            async = true;
++        }
+     } else if (methodName == "query") {
+         const char *data = NULL;
+         data = mh_sysconfig_query(args["query"].asString().c_str(),
+@@ -116,7 +169,10 @@ ConfigAgent::invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer u
+     }
+ 
+     free(status);
+-    session.methodSuccess(event);
++
++    if (!async) {
++        session.methodSuccess(event);
++    }
+ 
+ bail:
+     return TRUE;
+diff --git a/src/tests/mh_api_sysconfig.h b/src/tests/mh_api_sysconfig.h
+index 73c1d76..0ea4507 100644
+--- a/src/tests/mh_api_sysconfig.h
++++ b/src/tests/mh_api_sysconfig.h
+@@ -1,6 +1,7 @@
+ #ifndef __MH_API_NETWORK_UNITTEST_H
+ #define __MH_API_NETWORK_UNITTEST_H
+ #include <iostream>
++#include <cstring>
+ #include <string>
+ #include <sstream>
+ #include <utility>
+@@ -12,8 +13,10 @@
+ #include <cxxtest/TestSuite.h>
+ 
+ extern "C" {
+-#include "matahari/sysconfig.h"
+ #include <glib.h>
++
++#include "matahari/sysconfig.h"
++#include "matahari/sysconfig_internal.h"
+ #include "mh_test_utilities.h"
+ };
+ 
+@@ -25,15 +28,16 @@ class MhApiSysconfigSuite : public CxxTest::TestSuite
+ 
+     void testIsConfigured(void)
+     {
+-        const char *uri = "http://matahariproject.org/atom.xml"; // Test if download succeeds
+-        const char flags = 0;
+         const char key[] = "org.matahariproject.test.unittest"; // Unimportant key defined
++        char *key_res;
+ 
+         mh_sysconfig_keys_dir_set("/tmp/");
+ 
+         TS_ASSERT((mh_sysconfig_set_configured(key, "OK")) == TRUE);
+-        TS_ASSERT((mh_sysconfig_is_configured(key)) != NULL);
+-        TS_ASSERT((mh_sysconfig_run_uri(uri, flags, "puppet", key)) != -1);
++        TS_ASSERT(((key_res = mh_sysconfig_is_configured(key))) != NULL);
++        TS_ASSERT(!strcmp("OK", key_res));
++
++        free(key_res);
+     }
+ };
+ 

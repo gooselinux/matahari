@@ -1,0 +1,62 @@
+diff --git a/src/lib/sysconfig.c b/src/lib/sysconfig.c
+index 0301734..8f8a7c9 100644
+--- a/src/lib/sysconfig.c
++++ b/src/lib/sysconfig.c
+@@ -68,10 +68,24 @@ static gboolean
+ set_key(const char *key, const char *contents)
+ {
+     char key_file[PATH_MAX];
++    static const char valid_chars[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-.";
++    char sanitized_key[PATH_MAX];
+ 
+     if (mh_strlen_zero(key)) {
+         mh_err("key cannot be empty");
+-        return -1;
++        return FALSE;
++    }
++
++    if (g_str_has_prefix(key, ".")) {
++        mh_err("Invalid key filename %s", key);
++        return FALSE;
++    }
++
++    mh_string_copy(sanitized_key, key, sizeof(sanitized_key));
++    g_strcanon(sanitized_key, valid_chars, '!');
++    if (strchr(sanitized_key, '!') != NULL) {
++        mh_err("Invalid key filename %s", sanitized_key);
++        return FALSE;
+     }
+ 
+     if (!g_file_test(keys_dir_get(), G_FILE_TEST_IS_DIR) &&
+diff --git a/src/tests/mh_api_sysconfig.h b/src/tests/mh_api_sysconfig.h
+index 0bab713..5eb4fe7 100644
+--- a/src/tests/mh_api_sysconfig.h
++++ b/src/tests/mh_api_sysconfig.h
+@@ -17,6 +17,7 @@ extern "C" {
+ 
+ #include "matahari/sysconfig.h"
+ #include "matahari/sysconfig_internal.h"
++#include "matahari/utilities.h"
+ #include "mh_test_utilities.h"
+ };
+ 
+@@ -29,6 +30,9 @@ class MhApiSysconfigSuite : public CxxTest::TestSuite
+     void testIsConfigured(void)
+     {
+         const char key[] = "org.matahariproject.test.unittest"; // Unimportant key defined
++        const char *invalid_keys[3] = {"../etc/passwd",
++                                       "./../etc/passwd#",
++                                       "HAPPY#HAMMY,@"};
+         char *key_res;
+ 
+         mh_sysconfig_keys_dir_set("/tmp/matahari-sysconfig-keys/");
+@@ -38,6 +42,9 @@ class MhApiSysconfigSuite : public CxxTest::TestSuite
+         TS_ASSERT(!strcmp("OK", key_res));
+ 
+         free(key_res);
++        for (int i = 0; i < DIMOF(invalid_keys); i++) {
++            TS_ASSERT((mh_sysconfig_set_configured(invalid_keys[i], "OK")) == FALSE);
++        }
+     }
+ };
+ 

@@ -1,0 +1,126 @@
+diff --git a/src/include/matahari/sysconfig.h b/src/include/matahari/sysconfig.h
+index a5bfd04..076bff2 100644
+--- a/src/include/matahari/sysconfig.h
++++ b/src/include/matahari/sysconfig.h
+@@ -102,7 +102,7 @@ mh_sysconfig_query(const char *query, uint32_t flags, const char *scheme);
+  * \retval 1 if writing to file suceeds
+  * \retval 0 failed to write to file
+  */
+-extern gboolean
++gboolean
+ mh_sysconfig_set_configured(const char *key, const char *contents);
+ 
+ /**
+diff --git a/src/lib/sysconfig.c b/src/lib/sysconfig.c
+index 8e95adf..304f22a 100644
+--- a/src/lib/sysconfig.c
++++ b/src/lib/sysconfig.c
+@@ -64,27 +64,45 @@ mh_sysconfig_keys_dir_set(const char *path)
+     _keys_dir[sizeof(_keys_dir) - 1] = '\0';
+ }
+ 
+-static gboolean
+-set_key(const char *key, const char *contents)
++/**
++ * \internal
++ * \brief Chcek sanity of a key
++ *
++ * \retval 0 sane
++ * \retval non-zero bonkers
++ */
++static int
++check_key_sanity(const char *key)
+ {
+-    char key_file[PATH_MAX];
+-    static const char valid_chars[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-.";
++    static const char VALID_CHARS[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-.";
+     char sanitized_key[PATH_MAX];
+ 
+     if (mh_strlen_zero(key)) {
+         mh_err("key cannot be empty");
+-        return FALSE;
++        return -1;
+     }
+ 
+     if (g_str_has_prefix(key, ".")) {
+         mh_err("Invalid key filename %s", key);
+-        return FALSE;
++        return -1;
+     }
+ 
+     mh_string_copy(sanitized_key, key, sizeof(sanitized_key));
+-    g_strcanon(sanitized_key, valid_chars, '!');
++    g_strcanon(sanitized_key, VALID_CHARS, '!');
+     if (strchr(sanitized_key, '!') != NULL) {
+         mh_err("Invalid key filename %s", sanitized_key);
++        return -1;
++    }
++
++    return 0;
++}
++
++static gboolean
++set_key(const char *key, const char *contents)
++{
++    char key_file[PATH_MAX];
++
++    if (check_key_sanity(key)) {
+         return FALSE;
+     }
+ 
+@@ -93,7 +111,7 @@ set_key(const char *key, const char *contents)
+         mh_err("Could not create keys directory %s", keys_dir_get());
+         return FALSE;
+     }
+-        
++
+     g_snprintf(key_file, sizeof(key_file), "%s%s", keys_dir_get(), key);
+     if (!g_file_set_contents(key_file, contents, strlen(contents), NULL)) {
+         mh_err("Could not set file %s", key_file);
+@@ -110,8 +128,7 @@ get_key(const char *key)
+     char *contents = NULL;
+     size_t length;
+ 
+-    if (mh_strlen_zero(key)) {
+-        mh_err("key cannot be empty");
++    if (check_key_sanity(key)) {
+         return NULL;
+     }
+ 
+@@ -125,14 +142,10 @@ get_key(const char *key)
+     return contents;
+ }
+ 
+-int
++gboolean
+ mh_sysconfig_set_configured(const char *key, const char *contents)
+ {
+-    if (!set_key(key, contents)) {
+-        return FALSE;
+-    }
+-
+-    return TRUE;
++    return set_key(key, contents);
+ }
+ 
+ char *
+@@ -145,8 +158,7 @@ int
+ mh_sysconfig_run_uri(const char *uri, uint32_t flags, const char *scheme, const char *key,
+                      mh_sysconfig_result_cb result_cb, void *cb_data)
+ {
+-    if (mh_strlen_zero(key)) {
+-        mh_err("key cannot be empty");
++    if (check_key_sanity(key)) {
+         return -1;
+     }
+ 
+@@ -158,8 +170,7 @@ mh_sysconfig_run_string(const char *string, uint32_t flags, const char *scheme,
+                         const char *key, mh_sysconfig_result_cb result_cb,
+                         void *cb_data)
+ {
+-    if (mh_strlen_zero(key)) {
+-        mh_err("key cannot be empty");
++    if (check_key_sanity(key)) {
+         return -1;
+     }
+ 

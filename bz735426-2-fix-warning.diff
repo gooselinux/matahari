@@ -1,0 +1,13 @@
+diff --git a/src/broker/broker.c b/src/broker/broker.c
+index ead2a61..c443266 100644
+--- a/src/broker/broker.c
++++ b/src/broker/broker.c
+@@ -58,7 +58,7 @@ static void broker_args_free(char **args)
+ }
+ 
+ #define APPEND_ARG(ARGS, COUNT, NEWARG) do {      \
+-    const char *_newarg = strdup(NEWARG);         \
++    char *_newarg = strdup(NEWARG);               \
+     if (((ARGS)[(COUNT)++] = _newarg) == NULL) {  \
+         mh_err("Failed to allocate string");      \
+         broker_args_free(ARGS);                   \
