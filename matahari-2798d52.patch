@@ -1,0 +1,281 @@
+diff --git a/GNUmakefile b/GNUmakefile
+index 4187d4c..1c2f5b2 100644
+--- a/GNUmakefile
++++ b/GNUmakefile
+@@ -20,7 +20,8 @@
+ 
+ PACKAGE		?= matahari
+ VERSION		?= 0.4.0
+-TARFILE		= $(PACKAGE)-$(VERSION).tbz2
++TARPREFIX	= $(PACKAGE)-$(PACKAGE)-$(TAG)
++TARFILE		= $(TARPREFIX).tgz
+ 
+ RPM_ROOT	?= $(shell pwd)
+ RPM_OPTS	= --define "_sourcedir $(RPM_ROOT)" 	\
+@@ -62,8 +63,8 @@ check-mock:
+ 	make mock mock-win
+ 
+ export:
+-	rm -f $(TARFILE)
+-	git archive --prefix=$(PACKAGE)-$(VERSION)/ $(TAG) | bzip2 > $(TARFILE)
++	rm -f $(TARFILE).tgz
++	git archive --prefix=$(TARPREFIX)/ $(TAG) | gzip > $(TARFILE)
+ 	echo `date`: Rebuilt $(TARFILE) from $(TAG)
+ 
+ srpm:	export $(VARIANT)$(PACKAGE).spec
+diff --git a/autobuild.sh b/autobuild.sh
+index 4ab7418..1f18214 100644
+--- a/autobuild.sh
++++ b/autobuild.sh
+@@ -23,6 +23,7 @@ VERSION=0.4.0
+ : ${AUTO_BUILD_COUNTER:="custom"}
+ : ${AUTOBUILD_SOURCE_ROOT:=`pwd`}
+ : ${AUTOBUILD_INSTALL_ROOT:=`pwd`}
++: ${AUTOBUILD_PACKAGE_ROOT:=`pwd`}
+ 
+ function make_srpm() {
+     VARIANT=$1
+@@ -37,28 +38,28 @@ function make_srpm() {
+     echo `date`: Rebuilt ${TARFILE} from ${TAG}
+     
+     rm -f *.src.rpm
+-    rpmbuild -bs --define "_sourcedir ${AUTOBUILD_SOURCE_ROOT}" \
+-		 --define "_specdir  ${AUTOBUILD_SOURCE_ROOT}"  \
+-		 --define "_srcrpmdir ${AUTOBUILD_SOURCE_ROOT}" ${VARIANT}matahari.spec
++    rpmbuild -bs --define "_sourcedir ${PWD}" \
++		 --define "_specdir   ${PWD}" \
++		 --define "_srcrpmdir ${PWD}" ${VARIANT}matahari.spec
+ }
+ 
+ env
+ 
+ make_srpm 
+-mock --root=`rpm --eval fedora-%{fedora}-%{_arch}` --resultdir=$AUTOBUILD_INSTALL_ROOT --rebuild ${AUTOBUILD_SOURCE_ROOT}/*.src.rpm
++mock --root=`rpm --eval fedora-%{fedora}-%{_arch}` --resultdir=$AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/`rpm --eval %{_arch}` --rebuild ${PWD}/*.src.rpm
+ 
+ rc=$?
+-cat $AUTOBUILD_INSTALL_ROOT/build.log
++cat $AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/x86_64/build.log
+ 
+ if [ $rc != 0 ]; then
+     exit $rc
+ fi
+ 
+ make_srpm mingw32-
+-mock --root=`rpm --eval fedora-%{fedora}-%{_arch}` --resultdir=$AUTOBUILD_INSTALL_ROOT --rebuild ${AUTOBUILD_SOURCE_ROOT}/*.src.rpm
++mock --root=`rpm --eval fedora-%{fedora}-%{_arch}` --resultdir=$AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/noarch --rebuild ${PWD}/*.src.rpm
+ 
+ rc=$?
+-cat $AUTOBUILD_INSTALL_ROOT/build.log
++cat $AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/noarch/build.log
+ 
+ if [ $rc != 0 ]; then
+     exit $rc
+diff --git a/matahari.init.in b/matahari.init.in
+index d6ec380..134bb04 100644
+--- a/matahari.init.in
++++ b/matahari.init.in
+@@ -19,7 +19,8 @@
+ # Source function library.
+ . @sysconfdir@/rc.d/init.d/functions
+ 
+-SERVICE=`basename "$0"`
++SERVICE=`readlink -f "$0"`
++SERVICE=`basename "$SERVICE"`
+ PROCESS=`echo "$SERVICE"d`
+ 
+ RETVAL=0
+diff --git a/matahari.spec b/matahari.spec
+index d109f1c..33c17cd 100644
+--- a/matahari.spec
++++ b/matahari.spec
+@@ -1,5 +1,5 @@
+-%global specversion 21
+-%global upstream_version b6f91b3
++%global specversion 24
++%global upstream_version 8003b6c
+ 
+ # Keep around for when/if required
+ %global alphatag %{upstream_version}.git
+@@ -14,7 +14,9 @@ Summary:	Matahari QMF Agents for Linux guests
+ Group:		Applications/System
+ License:	GPLv2
+ URL:		http://fedorahosted.org/matahari
+-Source0:	matahari-%{version}.tbz2
++
++# wget --no-check-certificate -O matahari-matahari-{upstream_version}.tgz https://github.com/matahari/matahari/tarball/{upstream_version}
++Source0:	matahari-matahari-%{upstream_version}.tgz
+ BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
+ 
+ Requires:	dbus
+@@ -69,7 +71,7 @@ Requires:	glib2-devel
+ Headers and shared libraries for developing Matahari agents.
+ 
+ %prep
+-%setup -q
++%setup -q -n matahari-matahari-%{upstream_version}
+ 
+ %build
+ %{cmake} -DCMAKE_BUILD_TYPE=RelWithDebInfo .
+diff --git a/mingw32-matahari.spec b/mingw32-matahari.spec
+index 4f1450d..ccad34c 100644
+--- a/mingw32-matahari.spec
++++ b/mingw32-matahari.spec
+@@ -2,8 +2,8 @@
+ %global __objdump %{_mingw32_objdump}
+ 
+ 
+-%global specversion 10
+-%global upstream_version 66098f9
++%global specversion 11
++%global upstream_version 8003b6c
+ 
+ # Keep around for when/if required
+ %global alphatag %{upstream_version}.git
+@@ -18,9 +18,11 @@ Summary:	Matahari QMF Agents for Windows guests
+ Group:		Applications/System
+ License:	GPLv2
+ URL:		http://fedorahosted.org/matahari
+-Source0:	matahari-%{version}.tbz2
+-BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
+ 
++# wget --no-check-certificate -O matahari-matahari-{upstream_version}.tgz https://github.com/matahari/matahari/tarball/{upstream_version}
++Source0:	matahari-matahari-%{upstream_version}.tgz
++
++BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
+ BuildArch:	noarch
+ 
+ BuildRequires:	redhat-rpm-config cmake make qmf-devel
+@@ -45,7 +47,7 @@ MinGW cross-compiled Windows application.
+ %{_mingw32_debug_package}
+ 
+ %prep
+-%setup -q -n matahari-%{version}
++%setup -q -n matahari-matahari-%{upstream_version}
+ 
+ %build
+ PATH=%{_mingw32_bindir}:$PATH
+diff --git a/src/lib/mh_agent.cpp b/src/lib/mh_agent.cpp
+index 8a15202..49aeeee 100644
+--- a/src/lib/mh_agent.cpp
++++ b/src/lib/mh_agent.cpp
+@@ -92,20 +92,22 @@ struct option opt[] = {
+     {"broker", required_argument, NULL, 'b'},
+     {"gssapi", no_argument, NULL, 'g'},
+     {"username", required_argument, NULL, 'u'},
++    {"password", required_argument, NULL, 'P'},
+     {"service", required_argument, NULL, 's'},
+     {"port", required_argument, NULL, 'p'},
+     {0, 0, 0, 0}
+ };
+ 
+ static void
+-print_usage()
++print_usage(const char *proc_name)
+ {
+-    printf("Usage:\tmatahari-netd <options>\n");
++    printf("Usage:\tmatahari-%sd <options>\n", proc_name);
+     printf("\t-d | --daemon     run as a daemon.\n");
+     printf("\t-h | --help       print this help message.\n");
+     printf("\t-b | --broker     specify broker host name..\n");
+     printf("\t-g | --gssapi     force GSSAPI authentication.\n");
+     printf("\t-u | --username   username to use for authentication purproses.\n");
++    printf("\t-P | --password   password to use for authentication purproses.\n");
+     printf("\t-s | --service    service name to use for authentication purproses.\n");
+     printf("\t-p | --port       specify broker port.\n");
+ }
+@@ -140,6 +142,7 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+     bool gssapi = false;
+     char *servername = strdup(MATAHARI_BROKER);
+     char *username = NULL;
++    char *password = NULL;
+     char *service = NULL;
+     int serverport = MATAHARI_PORT;
+     int debuglevel = 0;
+@@ -192,15 +195,20 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ 	L"SYSTEM\\CurrentControlSet\\services\\Matahari",
+ 	L"User",
+ 	&username);
++    RegistryRead (
++	HKEY_LOCAL_MACHINE,
++	L"SYSTEM\\CurrentControlSet\\services\\Matahari",
++	L"Password",
++	&password);
+     
+ #else
+     
+     // Get args
+-    while ((arg = getopt_long(argc, argv, "hdb:gu:s:p:v", opt, &idx)) != -1) {
++    while ((arg = getopt_long(argc, argv, "hdb:gu:P:s:p:v", opt, &idx)) != -1) {
+ 	switch (arg) {
+ 	    case 'h':
+ 	    case '?':
+-		print_usage();
++		print_usage(proc_name);
+ 		exit(0);
+ 		break;
+ 	    case 'd':
+@@ -214,7 +222,7 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ 		if (optarg) {
+ 		    service = strdup(optarg);
+ 		} else {
+-		    print_usage();
++		    print_usage(proc_name);
+ 		    exit(1);
+ 		}
+ 		break;
+@@ -222,10 +230,18 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ 		if (optarg) {
+ 		    username = strdup(optarg);
+ 		} else {
+-		    print_usage();
++		    print_usage(proc_name);
+ 		    exit(1);
+ 		}
+ 		break;
++            case 'P':
++                if (optarg) {
++                    password = strdup(optarg);
++                } else {
++                    print_usage(proc_name);
++                    exit(1);
++                }
++                break;
+ 	    case 'g':
+ 		gssapi = true;
+ 		break;
+@@ -233,7 +249,7 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ 		if (optarg) {
+ 		    serverport = atoi(optarg);
+ 		} else {
+-		    print_usage();
++		    print_usage(proc_name);
+ 		    exit(1);
+ 		}
+ 		break;
+@@ -241,13 +257,13 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ 		if (optarg) {
+ 		    servername = strdup(optarg);
+ 		} else {
+-		    print_usage();
++		    print_usage(proc_name);
+ 		    exit(1);
+ 		}
+ 		break;
+ 	    default:
+ 		fprintf(stderr, "unsupported option '-%c'.  See --help.\n", arg);
+-		print_usage();
++		print_usage(proc_name);
+ 		exit(0);
+ 	    break;
+ 	}
+@@ -279,6 +295,9 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+     if (username != NULL) {
+ 	settings.username = username;
+     }
++    if (password != NULL) {
++        settings.password = password;
++    }
+     if (service != NULL) {
+ 	settings.service = service;
+     }

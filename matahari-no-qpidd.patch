@@ -1,0 +1,60 @@
+commit 6616b02c76619b619b44a0b2ad1bca0e87b196b4
+Author: Adam Stokes <astokes@fedoraproject.org>
+Date:   Wed Mar 23 21:19:53 2011 -0400
+
+    Update cmake build rules to not require qpidd
+    
+    - qpidd is part of qpid-cpp-server packaging and since removing that
+      requirement we need to make sure matahari still builds without finding
+      the broker executable.
+
+diff --git a/matahari.spec b/matahari.spec
+index 66cca5f..7f26d16 100644
+--- a/matahari.spec
++++ b/matahari.spec
+@@ -1,5 +1,5 @@
+-%global specversion 24
+-%global upstream_version 8003b6c
++%global specversion 25
++%global upstream_version 598a300
+ 
+ # Keep around for when/if required
+ %global alphatag %{upstream_version}.git
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index cf2e789..ccef9da 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -178,10 +178,10 @@ target_link_libraries(mcommon ${SIGAR})
+ target_link_libraries(mhost   ${SIGAR})
+ target_link_libraries(mnet    ${SIGAR})
+ 
+-string(REGEX REPLACE "\\." "" QPID_VERSION ${QPID_VERSION})
++# string(REGEX REPLACE "\\." "" QPID_VERSION ${QPID_VERSION})
+ 
+-message("Building against: ${QPID_VERSION_LONG} (${QPID_VERSION} )")
+-add_definitions(-DQPID_VERSION=${QPID_VERSION})
++# message("Building against: ${QPID_VERSION_LONG} (${QPID_VERSION} )")
++# add_definitions(-DQPID_VERSION=${QPID_VERSION})
+ 
+ set(regen_schema OFF)
+ message(STATUS "Regenerating QMF schemas: ${SCHEMAS}")
+diff --git a/src/cmake/modules/FindQPID.cmake b/src/cmake/modules/FindQPID.cmake
+index 1fc98b5..4cb0e89 100644
+--- a/src/cmake/modules/FindQPID.cmake
++++ b/src/cmake/modules/FindQPID.cmake
+@@ -130,6 +130,7 @@ else(MSVC)
+ 
+    else(WIN32)
+       find_file(QPIDD qpidd)
++      set(QPIDD false)
+       find_program(QMFGEN qmf-gen)
+       if(QPIDD)
+           execute_process(COMMAND ${QPIDD} --version  OUTPUT_VARIABLE QPID_VERSION_LONG)
+@@ -137,6 +138,7 @@ else(MSVC)
+           string(REGEX REPLACE "d \\(.*\\)" "" QPID_VERSION_LONG ${QPID_VERSION_LONG})
+           string(REGEX REPLACE ".* " "" QPID_VERSION ${QPID_VERSION_LONG})
+       else(QPIDD)
++          set(QPID_FIND_REQUIRED false)
+           if(QPID_FIND_REQUIRED)
+               message(FATAL_ERROR "Could not determine Qpid version, probably QPIDD not installed")
+           endif(QPID_FIND_REQUIRED)

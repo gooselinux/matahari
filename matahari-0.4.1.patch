@@ -1,0 +1,1827 @@
+diff --git a/GNUmakefile b/GNUmakefile
+index 1c2f5b2..979d7b8 100644
+--- a/GNUmakefile
++++ b/GNUmakefile
+@@ -92,8 +92,10 @@ mock-nodeps:
+ 
+ mock:   srpm mock-nodeps
+ 
++rpm-win:   
++	make PROFILE=$(PROFILE) VARIANT=mingw32- rpm
++
+ mock-win:   
+ 	make PROFILE=$(PROFILE) VARIANT=mingw32- srpm mock-nodeps
+ 
+-
+ .PHONY: check
+diff --git a/README b/README
+index b019801..0007b59 100644
+--- a/README
++++ b/README
+@@ -1,16 +1,46 @@
+-Matahari Agents
+- 
+-To manually build core agents:
+-mkdir build
+-cd build
+-cmake ../.
+-make
+-make install
++--------------------------------------------------
++* Matahari Agents Build and Install Instructions *
++--------------------------------------------------
++
++------------------------
++* Building from source *
++------------------------
++
++*Step 1* Install Build Dependencies
++
++Matahari has build dependencies on the following packages:
++
++1. pcre-devel
++2. glib2-devel
++3. qmf
++4. qmf-devel
++5. qpid-cpp-client
++6. qpid-cpp-serer
++7. qpid-cpp-client-devel
++8. qpid-cpp-server-devel
++9. sigar
++10. sigar-devel
++
++These packages may be available in your distribution.  In Fedora 14, they can
++be installed via the yum command.
++
++*Step 2* Build Mataharhi
+  
+-Fedora:
+-yum install matahari
++user% make
++user% cd linux.build
++user% make
++user# make install
+  
+-Windows:
++------------------------------------
++* Installing on Fedora 14 or later *
++------------------------------------
++Matahari is pre-packaged for Fedora 14 and later.
++
++user# yum install matahari
++
++------------------------ 
++* Windows instructions *
++------------------------ 
+ On your Fedora box first:
+   yum install mingw32-matahari
+ 
+@@ -18,6 +48,14 @@ On your Fedora box first:
+   load iso/cd; run setup
+   
+ Please see: https://fedorahosted.org/matahari/
+-Join the mailing lists for help
+-- Matahari https://fedorahosted.org/mailman/listinfo/matahari
+-- Cloud APIS http://www.redhat.com/mailman/listinfo/cloud-apis
++
++--------------------
++* If you get stuck *
++--------------------
++Join the appropriate mailing lists for help with building or installing
++Matahari:
++
++- Matahari
++  https://fedorahosted.org/mailman/listinfo/matahari
++- Cloud APIs
++  http://www.redhat.com/mailman/listinfo/cloud-apis
+diff --git a/autobuild.sh b/autobuild.sh
+index 1f18214..d6274a0 100644
+--- a/autobuild.sh
++++ b/autobuild.sh
+@@ -27,14 +27,17 @@ VERSION=0.4.0
+ 
+ function make_srpm() {
+     VARIANT=$1
+-    TARFILE=matahari-${VERSION}.tbz2
++
++    PACKAGE=matahari
+     TAG=`git show --pretty="format:%h" --abbrev-commit | head -n 1`
++    TARPREFIX=${PACKAGE}-${PACKAGE}-${TAG}
++    TARFILE=${TARPREFIX}.tgz
+ 
+     sed -i.sed s/global\ specversion.*/global\ specversion\ ${AUTO_BUILD_COUNTER}/ ${VARIANT}matahari.spec
+     sed -i.sed s/global\ upstream_version.*/global\ upstream_version\ ${TAG}/ ${VARIANT}matahari.spec
+     
+     rm -f ${TARFILE}
+-    git archive --prefix=matahari-${VERSION}/ ${TAG} | bzip2 > ${TARFILE}
++    git archive --prefix=${TARPREFIX}/ ${TAG} | gzip > ${TARFILE}
+     echo `date`: Rebuilt ${TARFILE} from ${TAG}
+     
+     rm -f *.src.rpm
+@@ -46,7 +49,7 @@ function make_srpm() {
+ env
+ 
+ make_srpm 
+-mock --root=`rpm --eval fedora-%{fedora}-%{_arch}` --resultdir=$AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/`rpm --eval %{_arch}` --rebuild ${PWD}/*.src.rpm
++/usr/bin/mock --root=`rpm --eval fedora-%{fedora}-%{_arch}` --resultdir=$AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/`rpm --eval %{_arch}` --rebuild ${PWD}/*.src.rpm
+ 
+ rc=$?
+ cat $AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/x86_64/build.log
+@@ -56,7 +59,7 @@ if [ $rc != 0 ]; then
+ fi
+ 
+ make_srpm mingw32-
+-mock --root=`rpm --eval fedora-%{fedora}-%{_arch}` --resultdir=$AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/noarch --rebuild ${PWD}/*.src.rpm
++/usr/bin/mock --root=`rpm --eval fedora-%{fedora}-%{_arch}` --resultdir=$AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/noarch --rebuild ${PWD}/*.src.rpm
+ 
+ rc=$?
+ cat $AUTOBUILD_PACKAGE_ROOT/rpm/RPMS/noarch/build.log
+diff --git a/matahari.spec b/matahari.spec
+index 33c17cd..66cca5f 100644
+--- a/matahari.spec
++++ b/matahari.spec
+@@ -29,7 +29,7 @@ BuildRequires:	libudev-devel
+ BuildRequires:	gcc-c++
+ BuildRequires:	dbus-devel
+ BuildRequires:	hal-devel
+-BuildRequires:	qpid-cpp-server-devel > 0.7
++BuildRequires:	qpid-cpp-client-devel > 0.7
+ BuildRequires:	qmf-devel > 0.7
+ BuildRequires:	pcre-devel
+ BuildRequires:	glib2-devel
+@@ -63,7 +63,7 @@ License:	GPLv2+
+ Summary:	Matahari development package
+ Group:		Development/Libraries
+ Requires:	%{name} = %{version}-%{release}
+-Requires:	qpid-cpp-server-devel > 0.7
++Requires:	qpid-cpp-client-devel > 0.7
+ Requires:	qmf-devel > 0.7
+ Requires:	glib2-devel
+ 
+diff --git a/mingw32-matahari.spec b/mingw32-matahari.spec
+index ccad34c..682817b 100644
+--- a/mingw32-matahari.spec
++++ b/mingw32-matahari.spec
+@@ -2,8 +2,8 @@
+ %global __objdump %{_mingw32_objdump}
+ 
+ 
+-%global specversion 11
+-%global upstream_version 8003b6c
++%global specversion 12
++%global upstream_version 060266b
+ 
+ # Keep around for when/if required
+ %global alphatag %{upstream_version}.git
+@@ -16,7 +16,7 @@ Release:	%{mh_release}
+ Summary:	Matahari QMF Agents for Windows guests
+ 
+ Group:		Applications/System
+-License:	GPLv2
++License:	GPLv2+
+ URL:		http://fedorahosted.org/matahari
+ 
+ # wget --no-check-certificate -O matahari-matahari-{upstream_version}.tgz https://github.com/matahari/matahari/tarball/{upstream_version}
+@@ -44,7 +44,7 @@ as a set of objects with properties and methods.
+ 
+ MinGW cross-compiled Windows application.
+ 
+-%{_mingw32_debug_package}
++#{_mingw32_debug_package}
+ 
+ %prep
+ %setup -q -n matahari-matahari-%{upstream_version}
+@@ -53,7 +53,7 @@ MinGW cross-compiled Windows application.
+ PATH=%{_mingw32_bindir}:$PATH
+ 
+ ls -al /usr/i686-pc-mingw32/sys-root/mingw/lib/pkgconfig
+-%{_mingw32_cmake} --debug-output -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=on
++%{_mingw32_cmake} --debug-output -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_VERBOSE_MAKEFILE=on
+ make VERBOSE=1 %{?_smp_mflags}
+ 
+ %install
+@@ -75,9 +75,9 @@ test "x%{buildroot}" != "x" && rm -rf %{buildroot}
+ %doc AUTHORS COPYING
+ 
+ %changelog
+-* Tue Oct 12 2010 Andrew Beekhof <andrew@beekhof.net> - matahari-0.4.0-0.3.e1d0d9a.git
++* Tue Oct 12 2010 Andrew Beekhof <andrew@beekhof.net> - 0.4.0-0.12.060266b.git
+ - Initial build.
+ 
+-* Fri Sep 10 2010 Andrew Beekhof <andrew@beekhof.net> - matahari-0.4.0-0.1
++* Fri Sep 10 2010 Andrew Beekhof <andrew@beekhof.net> - 0.4.0-0.1
+ - Initial build.
+ 
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 5749656..877beb1 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -51,6 +51,7 @@ set(SCHEMA_SOURCES
+         ${CMAKE_CURRENT_BINARY_DIR}/qmf/org/matahariproject/EventHeartbeat.cpp
+         ${CMAKE_CURRENT_BINARY_DIR}/qmf/org/matahariproject/EventService_op.cpp
+         ${CMAKE_CURRENT_BINARY_DIR}/qmf/org/matahariproject/EventResource_op.cpp
++        ${CMAKE_CURRENT_BINARY_DIR}/qmf/org/matahariproject/QmfPackage.cpp
+         ${CMAKE_CURRENT_BINARY_DIR}/qmf/org/matahariproject/Package.cpp)
+ 
+ ## Libraries and Common code
+@@ -177,13 +178,15 @@ if (regen_schema)
+     execute_process(COMMAND rm -f ${SCHEMA_SOURCES})
+     execute_process(COMMAND ${QMFGEN} -o ./qmf ${SCHEMAS}
+                     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
++    execute_process(COMMAND ${QMFGEN} -2 -o ./qmf ${SCHEMAS}
++                    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+ else (regen_schema)
+     message(STATUS "No need to generate QMF schema")
+ endif (regen_schema)
+ 
+ # Add QF libraries
+ foreach(daemon ${DAEMONS}) 
+-    target_link_libraries(${daemon} ${QPIDCOMMON_LIBRARY} ${QPIDCLIENT_LIBRARY} ${QMF_LIBRARY})
++    target_link_libraries(${daemon} ${QPIDCOMMON_LIBRARY} ${QPIDCLIENT_LIBRARY} ${QPIDMESSAGING_LIBRARY} ${QMF2_LIBRARY})
+     IF(QPIDTYPES_FOUND)
+         target_link_libraries(${daemon} ${QPIDTYPES_LIBRARY})
+     ENDIF(QPIDTYPES_FOUND)
+diff --git a/src/cmake/modules/FindQPID.cmake b/src/cmake/modules/FindQPID.cmake
+index 66efb38..1fc98b5 100644
+--- a/src/cmake/modules/FindQPID.cmake
++++ b/src/cmake/modules/FindQPID.cmake
+@@ -14,15 +14,21 @@ if(MSVC)
+ 
+ else(MSVC)
+    find_library(QMF_LIBRARY qmf)
++   find_library(QMF2_LIBRARY qmf2)
+    find_library(QPIDCLIENT_LIBRARY qpidclient)
+-   find_library(QPIDCOMMON_LIBRARY qpidcommon)	
+-   find_library(QPIDTYPES_LIBRARY qpidtypes)	
++   find_library(QPIDCOMMON_LIBRARY qpidcommon)
++   find_library(QPIDTYPES_LIBRARY qpidtypes)
++   find_library(QPIDMESSAGING_LIBRARY qpidmessaging)
+ 
+    # Check if we found all libraries
+    if(QMF_LIBRARY)
+        set(QMF_FOUND true)
+    endif(QMF_LIBRARY)
+ 
++   if(QMF2_LIBRARY)
++       set(QMF2_FOUND true)
++   endif(QMF2_LIBRARY)
++
+    if(QPIDCLIENT_LIBRARY)
+        set(QPIDCLIENT_FOUND true)
+    endif(QPIDCLIENT_LIBRARY)
+@@ -35,6 +41,10 @@ else(MSVC)
+        set(QPIDTYPES_FOUND true)
+    endif(QPIDTYPES_LIBRARY)
+ 
++   if(QPIDMESSAGING_LIBRARY)
++       set(QPIDMESSAGING_FOUND true)
++   endif(QPIDMESSAGING_LIBRARY)
++
+    # Handle found/not found libraries
+    if(QMF_FOUND)
+        if(NOT QPID_FIND_QUIETLY)
+@@ -46,6 +56,16 @@ else(MSVC)
+        endif(QPID_FIND_REQUIRED)
+    endif(QMF_FOUND)
+ 
++   if(QMF2_FOUND)
++       if(NOT QPID_FIND_QUIETLY)
++           message(STATUS "Found QMF2: ${QMF2_LIBRARY}")
++       endif(NOT QPID_FIND_QUIETLY)
++   else(QMF2_FOUND)
++       if(QPID_FIND_REQUIRED)
++           message(FATAL_ERROR "Could not find QMF2")
++       endif(QPID_FIND_REQUIRED)
++   endif(QMF2_FOUND)
++
+    if(QPIDCLIENT_FOUND)
+        if(NOT QPID_FIND_QUIETLY)
+            message(STATUS "Found QPIDCLIENT: ${QPIDCLIENT_LIBRARY}")
+@@ -78,9 +98,22 @@ else(MSVC)
+        endif(QPID_FIND_REQUIRED)
+    endif(QPIDTYPES_FOUND)
+ 
++   if(QPIDMESSAGING_FOUND)
++       if(NOT QPID_FIND_QUIETLY)
++           message(STATUS "Found QPIDMESSAGING: ${QPIDMESSAGING_LIBRARY}")
++       endif(NOT QPID_FIND_QUIETLY)
++   else(QPIDMESSAGING_FOUND)
++       if(QPID_FIND_REQUIRED)
++           # we don't want to fail now even we don't have QPIDMESSAGING!
++           # TODO: fix once QPIDMESSAGING available
++           message(STATUS "Could not find QPIDMESSAGING")
++       endif(QPID_FIND_REQUIRED)
++   endif(QPIDMESSAGING_FOUND)
++
+    # Figure out the qpid version
+    if(WIN32)
+       find_file(QPIDD qpidd.exe)
++      find_file(QMFGEN qmf-gen PATHS "/usr/i686-pc-mingw32/sys-root/mingw/managementgen")
+       if(QPIDD)
+           execute_process(COMMAND strings ${QPIDD} OUTPUT_VARIABLE QPID_VERSION_LONG)
+           string(REGEX REPLACE ".*BUILD/qpid" " qpid" QPID_VERSION_LONG ${QPID_VERSION_LONG})
+@@ -97,6 +130,7 @@ else(MSVC)
+ 
+    else(WIN32)
+       find_file(QPIDD qpidd)
++      find_program(QMFGEN qmf-gen)
+       if(QPIDD)
+           execute_process(COMMAND ${QPIDD} --version  OUTPUT_VARIABLE QPID_VERSION_LONG)
+           string(STRIP QPID_VERSION_LONG ${QPID_VERSION_LONG})
+@@ -110,7 +144,6 @@ else(MSVC)
+    endif(WIN32)
+ 
+    # Look for schema processor
+-   find_program(QMFGEN qmf-gen)
+    if(QMFGEN)
+        set(QMFGEN_FOUND true)
+ 
+diff --git a/src/host/matahari-host.cpp b/src/host/matahari-host.cpp
+index 296f5b3..82f7d88 100644
+--- a/src/host/matahari-host.cpp
++++ b/src/host/matahari-host.cpp
+@@ -23,26 +23,23 @@
+ 
+ #include <set>
+ #include "matahari/mh_agent.h"
++#include <qmf/Data.h>
+ #include "qmf/org/matahariproject/Host.h"
+ #include "qmf/org/matahariproject/EventHeartbeat.h"
+-#include <sigar.h>
+ 
+ extern "C" {
+ #include <string.h>
++#include <sigar.h>
+ #include "matahari/host.h"
++#include "matahari/logging.h"
+ }
+ 
+ class HostAgent : public MatahariAgent
+ {
+-    private:
+-	ManagementAgent* _agent;
+-	_qmf::Host* _management_object;
+-	
+     public:
+ 	int heartbeat();
+-	int setup(ManagementAgent* agent);
+-	ManagementObject* GetManagementObject() const { return _management_object; }
+-	status_t ManagementMethod(uint32_t method, Args& arguments, string& text);
++	int setup(qmf::AgentSession session);
++	gboolean invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data);
+ };
+ 
+ static gboolean heartbeat_timer(gpointer data)
+@@ -65,44 +62,46 @@ main(int argc, char **argv)
+     return rc;
+ }
+ 
+-int
+-HostAgent::setup(ManagementAgent* agent)
++gboolean 
++HostAgent::invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data)
+ {
+-  this->_agent = agent;
+-
+-  _management_object = new _qmf::Host(agent, this);
+-  agent->addObject(_management_object);
+-
+-  _management_object->set_update_interval(5);
+-  _management_object->set_uuid(host_get_uuid());
+-  _management_object->set_hostname(host_get_hostname());
+-  _management_object->set_os(host_get_operating_system());
+-  _management_object->set_wordsize(host_get_cpu_wordsize());
+-  _management_object->set_arch(host_get_architecture());
+-  _management_object->set_memory(host_get_memory());
+-  _management_object->set_swap(host_get_swap());
+-  _management_object->set_cpu_count(host_get_cpu_count());
+-  _management_object->set_cpu_cores(host_get_cpu_number_of_cores());
+-  _management_object->set_cpu_model(host_get_cpu_model());
+-  _management_object->set_cpu_flags(host_get_cpu_flags());
+-
+-  return 1;
++    if(event.getType() == qmf::AGENT_METHOD) {
++	const std::string& methodName(event.getMethodName());
++	if (methodName == "shutdown") {
++	    host_shutdown();
++	} else if (methodName == "reboot") {
++	    host_reboot();
++	} else {
++	    session.raiseException(event, MH_NOT_IMPLEMENTED);
++	    goto bail;
++	}
++    }
++    
++    session.methodSuccess(event);
++  bail:
++    return TRUE;
+ }
+ 
+-Manageable::status_t
+-HostAgent::ManagementMethod(uint32_t method, Args& arguments, string& text)
++int
++HostAgent::setup(qmf::AgentSession session)
+ {
+-  switch(method)
+-    {
+-    case _qmf::Host::METHOD_SHUTDOWN:
+-      host_shutdown();
+-      return Manageable::STATUS_OK;
+-    case _qmf::Host::METHOD_REBOOT:
+-      host_reboot();
+-      return Manageable::STATUS_OK;
+-    }
+-
+-  return Manageable::STATUS_NOT_IMPLEMENTED;
++    _instance = qmf::Data(_package.data_Host);
++    
++    _instance.setProperty("update_interval", 5);
++    _instance.setProperty("uuid", host_get_uuid());
++    _instance.setProperty("hostname", host_get_hostname());
++    _instance.setProperty("os", host_get_operating_system());
++    _instance.setProperty("wordsize", host_get_cpu_wordsize());
++    _instance.setProperty("arch", host_get_architecture());
++    _instance.setProperty("memory", host_get_memory());
++    _instance.setProperty("swap", host_get_swap());
++    _instance.setProperty("cpu_count", host_get_cpu_count());
++    _instance.setProperty("cpu_cores", host_get_cpu_number_of_cores());
++    _instance.setProperty("cpu_model", host_get_cpu_model());
++    _instance.setProperty("cpu_flags", host_get_cpu_flags());
++
++    session.addData(_instance);
++    return 0;
+ }
+ 
+ int
+@@ -111,11 +110,15 @@ HostAgent::heartbeat()
+     uint64_t timestamp = 0L, now = 0L;
+     sigar_loadavg_t avg;
+     sigar_proc_stat_t procs;
+-    static uint32_t _heartbeat_sequence = 1;
++    static uint32_t _heartbeat_sequence = 0;
++    uint32_t interval = _instance.getProperty("update_interval").asInt32();
+ 
+-    if(_management_object->get_update_interval() == 0) {
+-	/* Updates disabled, just sleep */
+-	qpid::sys::sleep(60);
++    _heartbeat_sequence++;
++    mh_trace("Updating stats: %d %d", _heartbeat_sequence, interval);
++
++    if(interval == 0) {
++	/* Updates disabled, check again in 5min */
++	return 5*60*1000;
+     }
+ 
+ #ifndef MSVC
+@@ -123,13 +126,12 @@ HostAgent::heartbeat()
+ #endif
+ 
+     now = timestamp * 1000000000;
+-    this->_agent->raiseEvent(_qmf::EventHeartbeat(timestamp, _heartbeat_sequence++));
+ 
+-    _management_object->set_last_updated(now);
+-    _management_object->set_sequence(_heartbeat_sequence);
++    _instance.setProperty("last_updated", now);
++    _instance.setProperty("sequence", _heartbeat_sequence);
+ 
+-    _management_object->set_free_swap(host_get_swap_free());
+-    _management_object->set_free_mem(host_get_mem_free());
++    _instance.setProperty("free_swap", host_get_swap_free());
++    _instance.setProperty("free_mem", host_get_mem_free());
+ 
+     ::qpid::types::Variant::Map load;
+     memset(&avg, 0, sizeof(sigar_loadavg_t));
+@@ -137,7 +139,7 @@ HostAgent::heartbeat()
+     load["1"]  = ::qpid::types::Variant((double)avg.loadavg[0]);
+     load["5"]  = ::qpid::types::Variant((double)avg.loadavg[1]);
+     load["15"] = ::qpid::types::Variant((double)avg.loadavg[2]);
+-    _management_object->set_load(load);
++    _instance.setProperty("load", load);
+ 
+     ::qpid::types::Variant::Map proc;
+     host_get_processes(&procs);
+@@ -147,7 +149,12 @@ HostAgent::heartbeat()
+     proc["running"]  = ::qpid::types::Variant((int)procs.running);
+     proc["stopped"]  = ::qpid::types::Variant((int)procs.stopped);
+     proc["sleeping"] = ::qpid::types::Variant((int)procs.sleeping);
+-    _management_object->set_process_statistics(proc);
++    _instance.setProperty("process_statistics", proc);
++
++    qmf::Data event = qmf::Data(_package.event_heartbeat);
++    event.setProperty("timestamp", timestamp);
++    event.setProperty("sequence", _heartbeat_sequence);
++    _agent_session.raiseEvent(event);
+ 
+-    return _management_object->get_update_interval() * 1000;
++    return interval * 1000;
+ }
+diff --git a/src/include/matahari/mh_agent.h b/src/include/matahari/mh_agent.h
+index 3662429..62c5aef 100644
+--- a/src/include/matahari/mh_agent.h
++++ b/src/include/matahari/mh_agent.h
+@@ -24,27 +24,57 @@
+ #include <qpid/sys/Time.h>
+ #include <qpid/agent/ManagementAgent.h>
+ #include <qpid/management/Manageable.h>
++#include <qpid/messaging/Connection.h>
++#include <qmf/AgentEvent.h>
+ 
+ extern "C" {
+ #include "matahari/mainloop.h"
+ }
+ 
++#define MH_NOT_IMPLEMENTED "Not implemented"
++
+ using namespace qpid::management;
+ using namespace std;
+ 
+-#include "qmf/org/matahariproject/Package.h"
++#include "qmf/org/matahariproject/QmfPackage.h" // v2 schema
+ namespace _qmf = qmf::org::matahariproject;
++namespace _qtype = ::qpid::types;
+ 
+-class MatahariAgent : public Manageable
++typedef struct mainloop_qmf_s 
+ {
++	GSource source;
++	qmf::AgentSession session;
++	qmf::AgentEvent event;
++	guint id;
++	void *user_data;
++	GDestroyNotify dnotify;
++	gboolean (*dispatch)(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data);
++
++} mainloop_qmf_t;
++
++extern mainloop_qmf_t *mainloop_add_qmf(int priority, qmf::AgentSession session,
++				  gboolean (*dispatch)(qmf::AgentSession session, qmf::AgentEvent event, gpointer userdata),
++				  GDestroyNotify notify, gpointer userdata);
++
++extern gboolean mainloop_destroy_qmf(mainloop_qmf_t* source);
++
++class MatahariAgent
++{
++ protected:
+     GMainLoop *mainloop;
+-    mainloop_fd_t *qpid_source;
++    mainloop_qmf_t *qpid_source;
++
++    qmf::Data _instance;
++    qmf::AgentSession _agent_session;
++    qpid::messaging::Connection _amqp_connection;
++    qmf::org::matahariproject::PackageDefinition _package;
+     
+   public:
+     MatahariAgent() {};
+     ~MatahariAgent() {};
+     
+-    virtual int setup(ManagementAgent *agent) { return 0; };
++    virtual int setup(qmf::AgentSession session) { return 0; };
++    virtual gboolean invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data) { return FALSE; };
+     int init(int argc, char **argv, const char* proc_name);
+     void run();
+ };
+diff --git a/src/include/matahari/utilities.h b/src/include/matahari/utilities.h
+index fb3db6e..e49db6a 100644
+--- a/src/include/matahari/utilities.h
++++ b/src/include/matahari/utilities.h
+@@ -21,7 +21,8 @@
+ #include <sys/types.h>
+ #include <string.h>
+ 
+-extern char *get_hostname(void);
++extern const char *matahari_uuid(void);
++extern const char *matahari_hostname(void);
+ extern void mh_abort(const char *file, const char *function, int line,
+ 		     const char *assert_condition, int do_core, int do_fork);
+ 
+diff --git a/src/lib/host.c b/src/lib/host.c
+index 8b1aa0d..73e1f6a 100644
+--- a/src/lib/host.c
++++ b/src/lib/host.c
+@@ -55,21 +55,13 @@ init(void)
+ const char *
+ host_get_uuid(void)
+ {
+-    return host_os_get_uuid();
++    return matahari_uuid();
+ }
+ 
+ const char *
+ host_get_hostname(void)
+ {
+-    init();
+-    sigar_net_info_t netinfo;
+-    char *host_name = NULL;
+-
+-    if(host_name == NULL) {
+-        sigar_net_info_get(host_init.sigar, &netinfo);
+-        host_name = g_strdup(netinfo.host_name);
+-    }
+-    return host_name;
++    return matahari_hostname();
+ }
+ 
+ const char *
+diff --git a/src/lib/host_linux.c b/src/lib/host_linux.c
+index 9bb76ac..f522562 100644
+--- a/src/lib/host_linux.c
++++ b/src/lib/host_linux.c
+@@ -36,41 +36,6 @@
+ #include "host_private.h"
+ 
+ const char *
+-host_os_get_uuid(void)
+-{
+-    static char * uuid = NULL;
+-
+-    if(uuid == NULL) {
+-	FILE *input = fopen("/var/lib/dbus/machine-id", "r");
+-	char *buffer = NULL;
+-	int chunk = 512, data_length = 0, read_chars = 0;
+-	do {
+-	    buffer = realloc(buffer, chunk + data_length + 1);
+-	    read_chars = fread(buffer + data_length, 1, chunk, input);
+-	    data_length += read_chars;
+-	} while (read_chars > 0);
+-
+-	if(data_length == 0) {
+-	    mh_warn("Could not read from /var/lib/dbus/machine-id");
+-	} else {
+-	    int lpc = 0;
+-	    for (; lpc < data_length; lpc++) {
+-		switch(buffer[lpc]) {
+-		    case '\0':
+-		    case '\n':
+-			uuid = malloc(lpc);
+-			snprintf(uuid, lpc-1, "%s", buffer);
+-		}
+-	    }
+-	}
+-	fclose(input);
+-	free(buffer);
+-    }
+-    
+-    return uuid;
+-}
+-
+-const char *
+ host_os_get_cpu_flags(void)
+ {
+     static char *flags = NULL;
+diff --git a/src/lib/host_private.h b/src/lib/host_private.h
+index f8ecc0c..14d1543 100644
+--- a/src/lib/host_private.h
++++ b/src/lib/host_private.h
+@@ -35,8 +35,6 @@ typedef struct host_init_s
+ 
+ extern host_init_t host_init;
+ 
+-extern const char *host_os_get_uuid(void);
+-extern const char *host_os_get_hostname(void);
+ extern const char *host_os_get_operating_system(void);
+ extern const char *host_os_get_architecture(void);
+ extern const char *host_os_get_cpu_flags(void);
+diff --git a/src/lib/host_windows.c b/src/lib/host_windows.c
+index 26cf574..257f69c 100644
+--- a/src/lib/host_windows.c
++++ b/src/lib/host_windows.c
+@@ -32,12 +32,6 @@
+ #include "host_private.h"
+ 
+ const char *
+-host_os_get_uuid(void)
+-{
+-    return host_get_hostname();
+-}
+-
+-const char *
+ host_os_get_cpu_flags(void)
+ {
+     return strdup("unknown");
+diff --git a/src/lib/mh_agent.cpp b/src/lib/mh_agent.cpp
+index 49aeeee..3f72d0f 100644
+--- a/src/lib/mh_agent.cpp
++++ b/src/lib/mh_agent.cpp
+@@ -27,6 +27,7 @@ int use_stderr = 0;
+ #include <iostream>
+ #include <fstream>
+ #include <string.h>
++#include <sstream>
+ #include <errno.h>
+ #include <vector>
+ #include <exception>
+@@ -37,8 +38,6 @@ int use_stderr = 0;
+ #include <qpid/sys/Time.h>
+ #include <qpid/agent/ManagementAgent.h>
+ #include <qpid/client/ConnectionSettings.h>
+-
+-#include "qmf/org/matahariproject/Package.h"
+ #include "matahari/mh_agent.h"
+ 
+ extern "C" {
+@@ -50,9 +49,6 @@ using namespace qpid::client;
+ using namespace std;
+ namespace _qmf = qmf::org::matahariproject;
+ 
+-// Global Variables
+-ManagementAgent::Singleton* singleton;
+-
+ void
+ shutdown(int /*signal*/)
+ {
+@@ -114,12 +110,16 @@ print_usage(const char *proc_name)
+ #endif
+ 
+ static gboolean 
+-mh_qpid_callback(int fd, gpointer user_data)
++mh_qpid_callback(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data)
+ {
+-    ManagementAgent *agent = (ManagementAgent *)user_data;
++    MatahariAgent *agent = (MatahariAgent*) user_data;
+     mh_trace("Qpid message recieved");
+-    agent->pollCallbacks();
+-    return TRUE;
++    if(event.hasDataAddr()) {
++	mh_trace("Message is for %s (type: %s)", 
++		 event.getDataAddr().getName().c_str(), 
++		 event.getDataAddr().getAgentName().c_str());
++    }
++    return agent->invoke(session, event, user_data);
+ }
+ 
+ static void
+@@ -141,14 +141,12 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ 
+     bool gssapi = false;
+     char *servername = strdup(MATAHARI_BROKER);
+-    char *username = NULL;
+-    char *password = NULL;
+-    char *service = NULL;
+-    int serverport = MATAHARI_PORT;
+-    int debuglevel = 0;
++    char *username  = NULL;
++    char *password  = NULL;
++    char *service   = NULL;
++    int serverport  = MATAHARI_PORT;
+ 
+     qpid::management::ConnectionSettings settings;
+-    ManagementAgent *agent;
+ 
+     /* Set up basic logging */
+     mh_log_init(proc_name, LOG_INFO, FALSE);    
+@@ -161,7 +159,7 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ 	&value);
+ 
+     if(value) {
+-	debuglevel = atoi(value);
++	mh_log_level = LOG_INFO+atoi(value);
+ 	free(value);
+ 	value = NULL;
+     }
+@@ -278,12 +276,7 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ #endif
+ 
+     /* Re-initialize logging now that we've completed option processing */
+-    mh_log_init(proc_name, LOG_INFO+debuglevel, debuglevel > 0);
+-
+-    // Get our management agent
+-    singleton = new ManagementAgent::Singleton();
+-    agent = singleton->getInstance();
+-    _qmf::Package packageInit(agent);
++    mh_log_init(proc_name, mh_log_level, mh_log_level > LOG_INFO);
+ 
+     // Set up the cleanup handler for sigint
+     signal(SIGINT, shutdown);
+@@ -292,35 +285,47 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+     settings.host = servername;
+     settings.port = serverport;
+ 
+-    if (username != NULL) {
+-	settings.username = username;
++    mh_info("Connecting to Qpid broker at %s on port %d", servername, serverport);
++
++    // Create a v2 API options map.
++    qpid::types::Variant::Map options;
++    options["reconnect"] = bool(true);
++    if (username) {
++	options["username"] = username;
+     }
+-    if (password != NULL) {
+-        settings.password = password;
++    if (password) {
++	options["password"] = password;
+     }
+-    if (service != NULL) {
+-	settings.service = service;
++    if (service) {
++	options["sasl-service"] = service;
+     }
+-    if (gssapi == true) {
+-	settings.mechanism = "GSSAPI";
++    if (gssapi) {
++	options["sasl-mechanism"] = "GSSAPI";
+     }
+ 
+-    mh_info("Connecting to Qpid broker at %s on port %d", servername, serverport);
+-    agent->setName("matahariproject.org", proc_name);
+-    std::string dataFile(".matahari-data-");
+-    agent->init(settings, 5, true, dataFile + proc_name);
++    std::stringstream url;
++    url << servername << ":" << serverport ;
++
++    _amqp_connection = qpid::messaging::Connection(url.str(), options);
++    _amqp_connection.open();
++
++    _agent_session = qmf::AgentSession(_amqp_connection);
++    _agent_session.setVendor("matahariproject.org");
++    _agent_session.setProduct(proc_name);
++
++    _package.configure(_agent_session);
++    _agent_session.open();
+ 
+     /* Do any setup required by our agent */
+-    if(this->setup(agent) < 0) {
+-	fprintf(stderr, "Failed to set up broker connection to %s on %d for %s\n", 
+-		servername, serverport, proc_name);
++    if(this->setup(_agent_session) < 0) {
++	mh_err("Failed to set up broker connection to %s on %d for %s\n", 
++	       servername, serverport, proc_name);
+ 	return -1;
+-    } 
+-    
++    }
+ 
+     this->mainloop = g_main_new(FALSE);
+-    this->qpid_source = mainloop_add_fd(
+-	G_PRIORITY_HIGH, agent->getSignalFd(), mh_qpid_callback, mh_qpid_disconnect, agent);
++    this->qpid_source = mainloop_add_qmf(
++	G_PRIORITY_HIGH, _agent_session, mh_qpid_callback, mh_qpid_disconnect, this);
+ 
+     return 0;
+ }
+@@ -328,5 +333,109 @@ MatahariAgent::init(int argc, char **argv, const char* proc_name)
+ void
+ MatahariAgent::run()
+ {
++    mh_trace("Starting agent mainloop");
+     g_main_run(this->mainloop);
+ }
++
++static gboolean
++mainloop_qmf_prepare(GSource* source, gint *timeout)
++{
++    mainloop_qmf_t *qmf = (mainloop_qmf_t*)source;
++    if (qmf->event) {
++	return TRUE;
++    }
++    
++    *timeout = 1;
++    return FALSE;
++}
++
++static gboolean
++mainloop_qmf_check(GSource* source)
++{
++    mainloop_qmf_t *qmf = (mainloop_qmf_t*)source;
++    if (qmf->event) {
++	return TRUE;
++
++    } else if(qmf->session.nextEvent(qmf->event, qpid::messaging::Duration::IMMEDIATE)) {
++	return TRUE;
++    }
++    return FALSE;
++}
++
++static gboolean
++mainloop_qmf_dispatch(GSource *source, GSourceFunc callback, gpointer userdata)
++{
++    mainloop_qmf_t *qmf = (mainloop_qmf_t*)source;
++    mh_trace("%p", source);
++    if (qmf->dispatch != NULL) {
++	qmf::AgentEvent event = qmf->event;
++	qmf->event = NULL;
++	
++	if(qmf->dispatch(qmf->session, event, qmf->user_data) == FALSE) {
++	    g_source_unref(source); /* Really? */
++	    return FALSE;
++	}
++    }
++    
++    return TRUE;
++}
++
++static void
++mainloop_qmf_destroy(GSource* source)
++{
++    mainloop_qmf_t *qmf = (mainloop_qmf_t*)source;
++    mh_trace("%p", source);
++
++    if (qmf->dnotify) {
++	qmf->dnotify(qmf->user_data);
++    }
++}
++
++static GSourceFuncs mainloop_qmf_funcs = {
++    mainloop_qmf_prepare,
++    mainloop_qmf_check,
++    mainloop_qmf_dispatch,
++    mainloop_qmf_destroy,
++};
++
++mainloop_qmf_t*
++mainloop_add_qmf(int priority, qmf::AgentSession session,
++		gboolean (*dispatch)(qmf::AgentSession session, qmf::AgentEvent event, gpointer userdata),
++		GDestroyNotify notify, gpointer userdata)
++{
++    GSource *source = NULL;
++    mainloop_qmf_t *qmf_source = NULL;
++    MH_ASSERT(sizeof(mainloop_qmf_t) > sizeof(GSource));
++    source = g_source_new(&mainloop_qmf_funcs, sizeof(mainloop_qmf_t));
++    MH_ASSERT(source != NULL);
++
++    qmf_source = (mainloop_qmf_t*)source;
++    qmf_source->id = 0;
++    qmf_source->event = NULL;
++    qmf_source->session = session;
++
++    /*
++     * Normally we'd use g_source_set_callback() to specify the dispatch function,
++     * But we want to supply the qmf session too, so we store it in qmf_source->dispatch instead
++     */
++    qmf_source->dnotify = notify;
++    qmf_source->dispatch = dispatch;
++    qmf_source->user_data = userdata;
++
++    g_source_set_priority(source, priority);
++    g_source_set_can_recurse(source, FALSE);
++    
++    qmf_source->id = g_source_attach(source, NULL);
++    mh_info("Added source: %d", qmf_source->id);
++    return qmf_source;
++}
++
++gboolean
++mainloop_destroy_qmf(mainloop_qmf_t* source)
++{
++    g_source_remove(source->id);
++    source->id = 0;
++    g_source_unref((GSource*)source);
++    
++    return TRUE;
++}
+diff --git a/src/lib/utilities.c b/src/lib/utilities.c
+index 33099f3..b9d2e0d 100644
+--- a/src/lib/utilities.c
++++ b/src/lib/utilities.c
+@@ -23,6 +23,7 @@
+ #include <stdio.h>
+ #include <errno.h>
+ #include <glib.h>
++#include <sigar.h>
+ 
+ #include "matahari/logging.h"
+ #include "matahari/utilities.h"
+@@ -329,34 +330,68 @@ mh_log_fn(int priority, const char * fmt, ...)
+     return;
+ }
+ 
+-char *get_hostname(void)
++const char *matahari_hostname(void)
+ {
+   static char *hostname = NULL;
+ 
+   if(hostname == NULL) {
+-#ifdef __linux__
++      sigar_t *sigar;
++      sigar_net_info_t netinfo;
++      sigar_open(&sigar);
++      sigar_net_info_get(sigar, &netinfo);
++      hostname = strdup(netinfo.host_name);
++  }
+ 
+-      struct utsname details;
++  if(hostname != NULL && strcmp(hostname, "localhost") == 0) {
++      free(hostname);
++      hostname = matahari_uuid();
++  }
+ 
+-      if(!uname(&details)) {
+-	  hostname = strdup(details.nodename);
+-      }
++  mh_trace("Got hostname: %s", hostname);
++  return hostname;
++}
++
++const char *matahari_uuid(void)
++{
++  static char *uuid = NULL;
+ 
+-#elif defined WIN32
+-      WORD verreq;
+-      WSADATA wsadata;
+-      
+-      hostname = malloc(500);
+-      verreq = MAKEWORD(2, 2);
+-      if(!WSAStartup(verreq, &wsadata)) {
+-	  if(gethostname(hostname, 500) != 0) {
+-	      free(hostname);
+-	      hostname = strdup("unknown");
++  if(uuid == NULL) {
++#ifdef __linux__
++      char *buffer = NULL;
++      int chunk = 512, data_length = 0, read_chars = 0;
++      const char *uuid_file = "/var/lib/dbus/machine-id";
++      FILE *input = fopen(uuid_file, "r");
++      if(input) {
++        do {
++	  buffer = realloc(buffer, chunk + data_length + 1);
++	  read_chars = fread(buffer + data_length, 1, chunk, input);
++	  data_length += read_chars;
++        } while (read_chars > 0);
++      }
++      if(data_length == 0) {
++	  mh_warn("Could not read from %s", uuid_file);
++	  uuid = strdup("unknown");
++	  
++      } else {
++	  int lpc = 0;
++	  for (; lpc < data_length; lpc++) {
++	      switch(buffer[lpc]) {
++		  case '\0':
++		  case '\n':
++		      uuid = malloc(lpc);
++		      snprintf(uuid, lpc-1, "%s", buffer);
++	      }
+ 	  }
+-	  WSACleanup();
+       }
+- #endif
++      if(input) {
++          fclose(input);
++      }
++      free(buffer);
++#else
++      uuid = strdup("unknown");
++#endif
+   }
+ 
+-  return hostname;
++  mh_trace("Got uuid: %s", uuid);
++  return uuid;
+ }
+diff --git a/src/net/matahari-net.cpp b/src/net/matahari-net.cpp
+index e7a4958..36882b2 100644
+--- a/src/net/matahari-net.cpp
++++ b/src/net/matahari-net.cpp
+@@ -46,14 +46,9 @@ extern "C" {
+ 
+ class NetAgent : public MatahariAgent
+ {
+-    private:
+-	ManagementAgent* _agent;
+-	_qmf::Network* _management_object;
+-	
+     public:
+-	int setup(ManagementAgent* agent);
+-	ManagementObject* GetManagementObject() const { return _management_object; }
+-	status_t ManagementMethod(uint32_t method, Args& arguments, string& text);
++	int setup(qmf::AgentSession session);
++	gboolean invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data);
+ };
+ 
+ int
+@@ -71,94 +66,80 @@ static int interface_status(const char *iface)
+ {
+     uint64_t flags = 0;
+     if(iface == NULL)
+-	return 3;
+-	
++       return 3;
++       
+     network_status(iface, &flags);
+ 
+     if(flags & SIGAR_IFF_UP) {
+-	return 0;
++       return 0;
+     }
+     return 1; /* Inactive */
+ }
+ 
+ int
+-NetAgent::setup(ManagementAgent* agent)
++NetAgent::setup(qmf::AgentSession session)
+ {
+-    this->_agent = agent;
+-    this->_management_object = new _qmf::Network(agent, this);
+-    this->_management_object->set_hostname(get_hostname());
++    _instance = qmf::Data(_package.data_Network);
++    
++    _instance.setProperty("hostname", matahari_hostname());
++    _instance.setProperty("uuid", matahari_uuid());
+ 
+-    agent->addObject(this->_management_object);
++    _agent_session.addData(_instance);    
+     return 0;
+ }
+ 
+-Manageable::status_t
+-NetAgent::ManagementMethod(uint32_t method, Args& arguments, string& text)
++gboolean
++NetAgent::invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data)
+ {
+-    switch(method)
+-	{
+-	case _qmf::Network::METHOD_LIST:
+-	    {
+-                GList *interface_list = NULL;
+-                GList *plist = NULL;
+-                sigar_net_interface_config_t *ifconfig = NULL;
+-		
+-		_qmf::ArgsNetworkList& ioArgs = (_qmf::ArgsNetworkList&) arguments;
+-                interface_list = network_get_interfaces();
+-                for(plist = g_list_first(interface_list); plist; plist = g_list_next(plist)) {
+-                    ifconfig = (sigar_net_interface_config_t *)plist->data;
+-                    ioArgs.o_iface_map.push_back(ifconfig->name);
+-		}
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Network::METHOD_START:
+-	    {
+-		_qmf::ArgsNetworkStart& ioArgs = (_qmf::ArgsNetworkStart&) arguments;
+-                ioArgs.o_status = interface_status(ioArgs.i_iface.c_str());
+-		if((ioArgs.o_status) == 1) {
+-		    network_start(ioArgs.i_iface.c_str());
+-		    ioArgs.o_status = interface_status(ioArgs.i_iface.c_str());
+-		}
+-	    }
+-	    return Manageable::STATUS_OK;
++    if(event.getType() == qmf::AGENT_METHOD) {
++	const std::string& methodName(event.getMethodName());
++	if (methodName == "list") {
++	    GList *plist = NULL;
++	    GList *interface_list = NULL;
++
++	    _qtype::Variant::List s_list;
++	    sigar_net_interface_config_t *ifconfig = NULL;
+ 	    
+-	case _qmf::Network::METHOD_STOP:
+-	    {
+-		_qmf::ArgsNetworkStop& ioArgs = (_qmf::ArgsNetworkStop&) arguments;
+-                ioArgs.o_status = interface_status(ioArgs.i_iface.c_str());
+-		if(ioArgs.o_status == 0) {
+-		    network_stop(ioArgs.i_iface.c_str());
+-		    ioArgs.o_status = interface_status(ioArgs.i_iface.c_str());
+-		}
++	    interface_list = network_get_interfaces();
++	    for(plist = g_list_first(interface_list); plist; plist = g_list_next(plist)) {
++		ifconfig = (sigar_net_interface_config_t *)plist->data;
++		s_list.push_back(ifconfig->name);
+ 	    }
+-	    return Manageable::STATUS_OK;
++	    event.addReturnArgument("iface_map", s_list);
+ 
+-	case _qmf::Network::METHOD_STATUS:
+-	    {
+-		_qmf::ArgsNetworkStatus& ioArgs = (_qmf::ArgsNetworkStatus&) arguments;
+-		ioArgs.o_status = interface_status(ioArgs.i_iface.c_str());
++	} else if (methodName == "start") {
++	    int rc = interface_status(event.getArguments()["iface"].asString().c_str());
+ 
++	    if(rc == 1) {
++		network_start(event.getArguments()["iface"].asString().c_str());
++		rc = interface_status(event.getArguments()["iface"].asString().c_str());
+ 	    }
+-	    return Manageable::STATUS_OK;
++	    event.addReturnArgument("status", rc);
+ 
+-	case _qmf::Network::METHOD_GET_IP_ADDRESS:
+-	    {
+-		_qmf::ArgsNetworkGet_ip_address& ioArgs = (_qmf::ArgsNetworkGet_ip_address&) arguments;
+-
+-                ioArgs.o_ip = g_strdup((network_get_ip_address(ioArgs.i_iface.c_str())));
++	} else if (methodName == "stop") {
++	    int rc = interface_status(event.getArguments()["iface"].asString().c_str());
++	    if(rc == 0) {
++		network_stop(event.getArguments()["iface"].asString().c_str());
++		rc = interface_status(event.getArguments()["iface"].asString().c_str());
+ 	    }
+-	    return Manageable::STATUS_OK;
++	    event.addReturnArgument("status", rc);
++
++	} else if (methodName == "status") {
++	    event.addReturnArgument("status", interface_status(event.getArguments()["iface"].asString().c_str()));
++	    
++	} else if (methodName == "get_ip_address") {
++	    event.addReturnArgument("ip", network_get_ip_address(event.getArguments()["iface"].asString().c_str()));
+ 
+-	case _qmf::Network::METHOD_GET_MAC_ADDRESS:
+-	    {
+-                const char *mac_str;
+-		_qmf::ArgsNetworkGet_mac_address& ioArgs = (_qmf::ArgsNetworkGet_mac_address&) arguments;
++	} else if (methodName == "get_mac_address") {
++	    event.addReturnArgument("mac", network_get_mac_address(event.getArguments()["iface"].asString().c_str()));
+ 
+-                mac_str = network_get_mac_address(ioArgs.i_iface.c_str());
+-                ioArgs.o_mac = g_strdup(mac_str);
+-	    }
+-	    return Manageable::STATUS_OK;
++	} else {
++	    session.raiseException(event, MH_NOT_IMPLEMENTED);
++	    goto bail;
+ 	}
+-    return Manageable::STATUS_NOT_IMPLEMENTED;
++    }
++
++    session.methodSuccess(event);
++  bail:
++    return TRUE;
+ }
+diff --git a/src/schema.xml b/src/schema.xml
+index e48baee..ea82e4f 100644
+--- a/src/schema.xml
++++ b/src/schema.xml
+@@ -23,7 +23,8 @@
+  <class name="Host">
+    <!-- properties -->
+    <property name="uuid"             type="sstr"   access="RO" desc="Host UUID" index="y" />
+-   <property name="hostname"         type="sstr"   access="RO" desc="Hostname" />
++   <property name="hostname"         type="sstr"   access="RO" desc="Hostname" index="y" />
++   <property name="hardware_uuid"    type="sstr"   access="RO" desc="Host Hardware UUID"  />
+ 
+    <property name="os"               type="sstr"   access="RO" desc="The installed operating system." />
+    <property name="arch"             type="sstr"   access="RO" desc="The host's architecture" />
+@@ -59,7 +60,8 @@
+ 
+  <!-- Network API -->
+   <class name="Network">
+-   <property name="hostname"   type="sstr"  access="RO" desc="Hostname" index="y"/>
++   <property name="uuid"             type="sstr"  access="RO" desc="Host UUID" />
++   <property name="hostname"         type="sstr"  access="RO" desc="Hostname" index="y" />
+ 
+    <!-- APIs -
+    <method name="identify"                desc="Tell network device to blink light"/>
+@@ -106,7 +108,8 @@
+  <event name="resource_op"	args="name,action,interval,rc,sequence,timestamp,rsc_type,rsc_class,rsc_provider" />
+ 
+  <class name="Services">
+-   <property name="hostname"    type="sstr"  access="RO" desc="Hostname" index="y"/>
++   <property name="uuid"        type="sstr" access="RO" desc="Host UUID" />
++   <property name="hostname"    type="sstr" access="RO" desc="Hostname" index="y"/>
+ 
+    <method name="list"          desc="List known system services">
+      <arg name="services"       dir="O"  type="list" />
+@@ -148,6 +151,7 @@
+  </class>
+ 
+  <class name="Resources">
++   <property name="uuid"        type="sstr" access="RO" desc="Host UUID" />
+    <property name="hostname"    type="sstr"  access="RO" desc="Hostname" index="y"/>
+ 
+    <method name="list_classes"  desc="List known resource classes (OCF, LSB, Upstart, etc)">
+diff --git a/src/service/matahari-srv.cpp b/src/service/matahari-srv.cpp
+index 7c83dd9..38ae48b 100644
+--- a/src/service/matahari-srv.cpp
++++ b/src/service/matahari-srv.cpp
+@@ -26,28 +26,9 @@
+ #include "matahari/mh_agent.h"
+ 
+ #include "qmf/org/matahariproject/Services.h"
+-#include "qmf/org/matahariproject/ArgsServicesList.h"
+-#include "qmf/org/matahariproject/ArgsServicesDescribe.h"
+-#include "qmf/org/matahariproject/ArgsServicesStop.h"
+-#include "qmf/org/matahariproject/ArgsServicesStart.h"
+-#include "qmf/org/matahariproject/ArgsServicesStatus.h"
+-#include "qmf/org/matahariproject/ArgsServicesEnable.h"
+-#include "qmf/org/matahariproject/ArgsServicesDisable.h"
+-#include "qmf/org/matahariproject/ArgsServicesCancel.h"
+-#include "qmf/org/matahariproject/ArgsServicesFail.h"
+ #include "qmf/org/matahariproject/EventService_op.h"
+ 
+ #include "qmf/org/matahariproject/Resources.h"
+-#include "qmf/org/matahariproject/ArgsResourcesList.h"
+-#include "qmf/org/matahariproject/ArgsResourcesList_classes.h"
+-#include "qmf/org/matahariproject/ArgsResourcesList_ocf_providers.h"
+-#include "qmf/org/matahariproject/ArgsResourcesDescribe.h"
+-#include "qmf/org/matahariproject/ArgsResourcesStop.h"
+-#include "qmf/org/matahariproject/ArgsResourcesStart.h"
+-#include "qmf/org/matahariproject/ArgsResourcesMonitor.h"
+-#include "qmf/org/matahariproject/ArgsResourcesInvoke.h"
+-#include "qmf/org/matahariproject/ArgsResourcesCancel.h"
+-#include "qmf/org/matahariproject/ArgsResourcesFail.h"
+ #include "qmf/org/matahariproject/EventResource_op.h"
+ 
+ extern "C" { 
+@@ -55,47 +36,22 @@ extern "C" {
+ #include "matahari/services.h"
+ }
+ 
+-class SrvManageable : public Manageable
++class SrvAgent : public MatahariAgent
+ {
+     private:
+-	_qmf::Services* _management_object;
+-	
+-    public:
+-	SrvManageable(ManagementAgent* agent) {
+-	    _management_object = new _qmf::Services(agent, this);
+-	    _management_object->set_hostname(get_hostname());
+-	    agent->addObject(this->_management_object);
+-	};
+-	ManagementObject* GetManagementObject() const { return _management_object; }
+-	status_t ManagementMethod(uint32_t method, Args& arguments, string& text);
+-};
++	qmf::Data _services;
++	qmf::DataAddr _services_addr;
+ 
+-class RscManageable : public Manageable
+-{
+-    private:
+-	_qmf::Resources* _management_object;
+-	
+-    public:
+-	RscManageable(ManagementAgent* agent) { 
+-	    _management_object = new _qmf::Resources(agent, this); 
+-	    _management_object->set_hostname(get_hostname());
+-	    agent->addObject(this->_management_object);
+-	};
+-	ManagementObject* GetManagementObject() const { return _management_object; }
+-	status_t ManagementMethod(uint32_t method, Args& arguments, string& text);
+-};
++	qmf::Data _resources;
++	qmf::DataAddr _resources_addr;
+ 
+-class SrvAgent : public MatahariAgent
+-{
+-    private:
+-	ManagementAgent* _agent;
+-	SrvManageable *services;
+-	RscManageable *resources;
++	gboolean invoke_services(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data);
++	gboolean invoke_resources(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data);
+ 	
+     public:
+ 	void raiseEvent(svc_action_t *op, int service);
+-	int setup(ManagementAgent* agent);
+-	ManagementObject* GetManagementObject() const { return services->GetManagementObject(); }
++	int setup(qmf::AgentSession session);
++	gboolean invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data);
+ };
+ 
+ 
+@@ -149,236 +105,251 @@ main(int argc, char **argv)
+ void SrvAgent::raiseEvent(svc_action_t *op, int service)
+ {
+     uint64_t timestamp = 0L;
+-
++    qmf::Data event;
++    
+ #ifndef MSVC
+     timestamp = ::time(NULL);
+ #endif
+ 
+     if(service) {
+-	this->_agent->raiseEvent(_qmf::EventService_op(
+-				     op->rsc, op->action, op->interval, op->rc, 0, timestamp));
++	event = qmf::Data(_package.event_service_op);
+     } else {
+-	this->_agent->raiseEvent(_qmf::EventResource_op(
+-				     op->rsc, op->action, op->interval, op->rc, 0, timestamp, 
+-				     op->agent, op->rclass, op->provider));
++	event = qmf::Data(_package.event_resource_op);
+     }
++    
++    event.setProperty("name", op->rsc);
++    event.setProperty("action", op->action);
++    event.setProperty("interval", op->interval);
++    event.setProperty("rc", op->rc);
++    event.setProperty("timestamp", timestamp);
++    event.setProperty("sequence", 0);
++    
++
++    if(service == 0) {
++	event.setProperty("rsc_type", op->agent);
++	event.setProperty("rsc_class", op->rclass);
++	event.setProperty("rsc_provider", op->provider);
++    }
++
++    _agent_session.raiseEvent(event);
+ }
+ 
+ int
+-SrvAgent::setup(ManagementAgent* agent)
++SrvAgent::setup(qmf::AgentSession session)
+ {
+-    this->_agent = agent;
+-    this->services = new SrvManageable(agent);
+-    this->resources = new RscManageable(agent);
++    _services = qmf::Data(_package.data_Services);
++	    
++    _services.setProperty("uuid", matahari_uuid());
++    _services.setProperty("hostname", matahari_hostname());
++	    
++    _services_addr = session.addData(_services);
++
++    _resources = qmf::Data(_package.data_Resources);
++	    
++    _resources.setProperty("uuid", matahari_uuid());
++    _resources.setProperty("hostname", matahari_hostname());
++	    
++    _resources_addr = session.addData(_resources);
+ 
+     return 0;
+ }
+ 
+-Manageable::status_t
+-SrvManageable::ManagementMethod(uint32_t method, Args& arguments, string& text)
++gboolean 
++SrvAgent::invoke(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data)
++{
++    if(event.getType() == qmf::AGENT_METHOD && event.hasDataAddr()) {
++	if(_services_addr == event.getDataAddr()) {
++	    mh_info("Calling services API");
++	    return invoke_services(session, event, user_data);
++	}
++
++	mh_info("Calling resources API");
++	return invoke_resources(session, event, user_data);
++    }
++
++    mh_err("Unhandled message");
++    return TRUE;
++}
++
++
++gboolean 
++SrvAgent::invoke_services(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data)
+ {
+     int default_timeout_ms = 60000;
+-    switch(method)
+-	{
+-	case _qmf::Services::METHOD_LIST:
+-	    {
+-		GList *gIter = NULL;
+-		GList *services = services_list();
+-		_qmf::ArgsServicesList& ioArgs = (_qmf::ArgsServicesList&) arguments;
++    const std::string& methodName(event.getMethodName());
++    if(event.getType() != qmf::AGENT_METHOD) {
++	return TRUE;
++    }
++    
++    if (methodName == "list") {
++	_qtype::Variant::List s_list;
++	GList *gIter = NULL;
++	GList *services = services_list();
+ 		
+-		for(gIter = services; gIter != NULL; gIter = gIter->next) {
+-		    ioArgs.o_services.push_back((const char *)gIter->data);
+-		}
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Services::METHOD_ENABLE:
+-	    {
+-		_qmf::ArgsServicesEnable& ioArgs = (_qmf::ArgsServicesEnable&) arguments;
+-		svc_action_t * op = services_action_create(ioArgs.i_name.c_str(), "enable", 0, default_timeout_ms);
+-		services_action_sync(op);
+-		services_action_free(op);
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Services::METHOD_DISABLE:
+-	    {
+-		_qmf::ArgsServicesDisable& ioArgs = (_qmf::ArgsServicesDisable&) arguments;
+-		svc_action_t * op = services_action_create(ioArgs.i_name.c_str(), "disable", 0, default_timeout_ms);
+-		services_action_sync(op);
+-		services_action_free(op);
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Services::METHOD_START:
+-	    {
+-		_qmf::ArgsServicesStart& ioArgs = (_qmf::ArgsServicesStart&) arguments;
+-		svc_action_t *op = services_action_create(ioArgs.io_name.c_str(), "start", 0, ioArgs.i_timeout);
+-		services_action_sync(op);
+-		ioArgs.o_rc = op->rc;
+-		services_action_free(op);
+-	    }
+-	    return Manageable::STATUS_OK;
++	for(gIter = services; gIter != NULL; gIter = gIter->next) {
++	    s_list.push_back((const char *)gIter->data);
++	}
++
++	event.addReturnArgument("services", s_list);
++
++    } else if (methodName == "enable") {
++	svc_action_t * op = services_action_create(
++	    event.getArguments()["name"].asString().c_str(), "enable", 0, default_timeout_ms);
++	services_action_sync(op);
++	services_action_free(op);
++
++    } else if (methodName == "disable") {
++	svc_action_t * op = services_action_create(
++	    event.getArguments()["name"].asString().c_str(), "disable", 0, default_timeout_ms);
++	services_action_sync(op);
++	services_action_free(op);
++
++    } else if (methodName == "start") {
++	svc_action_t *op = services_action_create(
++	    event.getArguments()["name"].asString().c_str(), "start", 0, event.getArguments()["timeout"]);
++	services_action_sync(op);
++	event.addReturnArgument("rc", op->rc);
++	services_action_free(op);
+ 	    
+-	case _qmf::Services::METHOD_STOP:
+-	    {
+-		_qmf::ArgsServicesStop& ioArgs = (_qmf::ArgsServicesStop&) arguments;
+-		svc_action_t * op = services_action_create(ioArgs.io_name.c_str(), "stop", 0, ioArgs.i_timeout);
+-		services_action_sync(op);
+-		ioArgs.o_rc = op->rc;
+-		services_action_free(op);
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Services::METHOD_STATUS:
+-	    {
+-		_qmf::ArgsServicesStatus& ioArgs = (_qmf::ArgsServicesStatus&) arguments;
+-		svc_action_t *op = services_action_create(ioArgs.io_name.c_str(), "status", ioArgs.io_interval, ioArgs.i_timeout);
+-
+-		if(ioArgs.io_interval) {
+-		    return Manageable::STATUS_NOT_IMPLEMENTED;
+-
+-		    services_action_async(op, mh_service_callback);
+-		    ioArgs.o_rc = OCF_PENDING;
+-
+-		} else {
+-		    services_action_sync(op);
+-		    ioArgs.o_rc = op->rc;
+-		    services_action_free(op);
+-		}
+-	    }	    
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Services::METHOD_CANCEL:
+-	    {
+-		_qmf::ArgsServicesCancel& ioArgs = (_qmf::ArgsServicesCancel&) arguments;
+-		services_action_cancel(ioArgs.i_name.c_str(), ioArgs.i_action.c_str(), ioArgs.i_interval);
+-	    }
++    } else if (methodName == "stop") {
++	svc_action_t * op = services_action_create(
++	    event.getArguments()["name"].asString().c_str(), "stop", 0, event.getArguments()["timeout"]);
++	services_action_sync(op);
++	event.addReturnArgument("rc", op->rc);
++	services_action_free(op);
++
++    } else if (methodName == "status") {
++	svc_action_t *op = services_action_create(
++	    event.getArguments()["name"].asString().c_str(), "status", 
++	    event.getArguments()["interval"], event.getArguments()["timeout"]);
+ 	    
+-	    return Manageable::STATUS_OK;
+-
+-	// case _qmf::Services::METHOD_DESCRIBE:
++	if(event.getArguments()["interval"]) {
++	    session.raiseException(event, MH_NOT_IMPLEMENTED);
++	    return TRUE;
++		
++	    services_action_async(op, mh_service_callback);
++	    event.addReturnArgument("rc", OCF_PENDING);
++		
++	} else {
++	    services_action_sync(op);
++	    event.addReturnArgument("rc", op->rc);
++	    services_action_free(op);
+ 	}
+-    return Manageable::STATUS_NOT_IMPLEMENTED;
++
++    } else if (methodName == "cancel") {
++	services_action_cancel(
++	    event.getArguments()["name"].asString().c_str(), event.getArguments()["action"].asString().c_str(), 
++	    event.getArguments()["interval"]);
++
++    } else {
++	session.raiseException(event, MH_NOT_IMPLEMENTED);
++	return TRUE;
++    }
++    
++    session.methodSuccess(event);
++    return TRUE;
+ }
+ 
+-Manageable::status_t
+-RscManageable::ManagementMethod(uint32_t method, Args& arguments, string& text)
++gboolean
++SrvAgent::invoke_resources(qmf::AgentSession session, qmf::AgentEvent event, gpointer user_data)
+ {
+-    switch(method)
+-	{
+-	case _qmf::Resources::METHOD_LIST_CLASSES:
+-	    {
+-		_qmf::ArgsResourcesList_classes& ioArgs = (_qmf::ArgsResourcesList_classes&) arguments;
+-		ioArgs.o_classes.push_back("ocf");
+-		ioArgs.o_classes.push_back("lsb");
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Resources::METHOD_LIST_OCF_PROVIDERS:
+-	    {
+-		GList *gIter = NULL;
+-		GList *providers = resources_list_ocf_providers();
+-		_qmf::ArgsResourcesList_ocf_providers& ioArgs = (_qmf::ArgsResourcesList_ocf_providers&) arguments;
+-		
+-		for(gIter = providers; gIter != NULL; gIter = gIter->next) {
+-		    ioArgs.o_providers.push_back((const char *)gIter->data);
+-		}
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Resources::METHOD_LIST:
+-	    {
+-		GList *gIter = NULL;
+-		_qmf::ArgsResourcesList& ioArgs = (_qmf::ArgsResourcesList&) arguments;
+-		GList *agents = resources_list_ocf_agents(ioArgs.i_provider.c_str());
++    const std::string& methodName(event.getMethodName());
++    if(event.getType() != qmf::AGENT_METHOD) {
++	return TRUE;
++    }
++    
++    if (methodName == "list_classes") {
++	_qtype::Variant::List c_list;
++	c_list.push_back("ocf");
++	c_list.push_back("lsb");
++	event.addReturnArgument("classes", c_list);
++
++    } else if (methodName == "list_ocf_providers") {
++	GList *gIter = NULL;
++	GList *providers = resources_list_ocf_providers();
++	_qtype::Variant::List p_list;
+ 		
+-		for(gIter = agents; gIter != NULL; gIter = gIter->next) {
+-		    ioArgs.o_types.push_back((const char *)gIter->data);
+-		}
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Resources::METHOD_START:
+-	    {
+-		_qmf::ArgsResourcesStart& ioArgs = (_qmf::ArgsResourcesStart&) arguments;
+-		GHashTable *params = qmf_map_to_hash(ioArgs.i_parameters);
+-		svc_action_t *op = resources_action_create(
+-		    ioArgs.io_name.c_str(), ioArgs.io_provider.c_str(), ioArgs.io_type.c_str(),
+-		    "start", 0, ioArgs.i_timeout, params);
+-		services_action_sync(op);
+-		ioArgs.o_rc = op->rc;
+-		services_action_free(op);
+-	    }
+-	    return Manageable::STATUS_OK;
+-	    
+-	case _qmf::Resources::METHOD_STOP:
+-	    {
+-		_qmf::ArgsResourcesStop& ioArgs = (_qmf::ArgsResourcesStop&) arguments;
+-		GHashTable *params = qmf_map_to_hash(ioArgs.i_parameters);
+-		svc_action_t *op = resources_action_create(
+-		    ioArgs.io_name.c_str(), ioArgs.io_provider.c_str(), ioArgs.io_type.c_str(),
+-		    "stop", 0, ioArgs.i_timeout, params);
+-		services_action_sync(op);
+-		ioArgs.o_rc = op->rc;
+-		services_action_free(op);
+-	    }
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Resources::METHOD_MONITOR:
+-	    {
+-		_qmf::ArgsResourcesMonitor& ioArgs = (_qmf::ArgsResourcesMonitor&) arguments;
+-		GHashTable *params = qmf_map_to_hash(ioArgs.i_parameters);
+-		svc_action_t *op = resources_action_create(
+-		    ioArgs.io_name.c_str(), ioArgs.io_provider.c_str(), ioArgs.io_type.c_str(),
+-		    "monitor", ioArgs.io_interval, ioArgs.i_timeout, params);
+-
+-		if(op->interval) {
+-		    return Manageable::STATUS_NOT_IMPLEMENTED;
+-
+-		    services_action_async(op, mh_resource_callback);
+-		    ioArgs.o_rc = OCF_PENDING;
+-
+-		} else {
+-		    services_action_sync(op);
+-		    ioArgs.o_rc = op->rc;
+-		    services_action_free(op);
+-		}
+-	    }	    
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Resources::METHOD_INVOKE:
+-	    {
+-		_qmf::ArgsResourcesInvoke& ioArgs = (_qmf::ArgsResourcesInvoke&) arguments;
+-		GHashTable *params = qmf_map_to_hash(ioArgs.i_parameters);
+-		svc_action_t *op = resources_action_create(
+-		    ioArgs.io_name.c_str(), ioArgs.io_provider.c_str(), ioArgs.io_type.c_str(),
+-		    ioArgs.io_action.c_str(), ioArgs.io_interval, ioArgs.i_timeout, params);
++	for(gIter = providers; gIter != NULL; gIter = gIter->next) {
++	    p_list.push_back((const char *)gIter->data);
++	}
++	event.addReturnArgument("providers", p_list);
+ 
++    } else if (methodName == "list") {
++	GList *gIter = NULL;
++	GList *agents = resources_list_ocf_agents(event.getArguments()["provider"].asString().c_str());
++	_qtype::Variant::List t_list;
+ 		
+-		if(op->interval) {
+-		    return Manageable::STATUS_NOT_IMPLEMENTED;
+-
+-		    services_action_async(op, mh_resource_callback);
+-		    ioArgs.o_rc = OCF_PENDING;
+-
+-		} else {
+-		    services_action_sync(op);
+-		    ioArgs.o_rc = op->rc;
+-		    services_action_free(op);
+-		}
+-	    }	    
+-	    return Manageable::STATUS_OK;
+-
+-	case _qmf::Resources::METHOD_CANCEL:
+-	    {
+-		_qmf::ArgsResourcesCancel& ioArgs = (_qmf::ArgsResourcesCancel&) arguments;
+-		services_action_cancel(ioArgs.io_name.c_str(), ioArgs.io_action.c_str(), ioArgs.io_interval);
+-	    }
+-	    
+-	    return Manageable::STATUS_OK;
++	for(gIter = agents; gIter != NULL; gIter = gIter->next) {
++	    t_list.push_back((const char *)gIter->data);
++	}
++	event.addReturnArgument("types", t_list);
++
++    } else if (methodName == "start") {
++	GHashTable *params = qmf_map_to_hash(event.getArguments()["parameters"].asMap());
++	svc_action_t *op = resources_action_create(
++	    event.getArguments()["name"].asString().c_str(), event.getArguments()["provider"].asString().c_str(),
++	    event.getArguments()["type"].asString().c_str(), "start", 0, event.getArguments()["timeout"], params);
++	services_action_sync(op);
++	event.addReturnArgument("rc", op->rc);
++	services_action_free(op);
++
++    } else if (methodName == "stop") {
++	GHashTable *params = qmf_map_to_hash(event.getArguments()["parameters"].asMap());
++	svc_action_t *op = resources_action_create(
++	    event.getArguments()["name"].asString().c_str(), event.getArguments()["provider"].asString().c_str(),
++	    event.getArguments()["type"].asString().c_str(), "stop", 0, event.getArguments()["timeout"], params);
++	services_action_sync(op);
++	event.addReturnArgument("rc", op->rc);
++	services_action_free(op);
++
++    } else if (methodName == "monitor") {
++	GHashTable *params = qmf_map_to_hash(event.getArguments()["parameters"].asMap());
++	svc_action_t *op = resources_action_create(
++	    event.getArguments()["name"].asString().c_str(), event.getArguments()["provider"].asString().c_str(),
++	    event.getArguments()["type"].asString().c_str(), "monitor", event.getArguments()["interval"], 
++	    event.getArguments()["timeout"], params);
++
++	if(op->interval) {
++	    session.raiseException(event, MH_NOT_IMPLEMENTED);
++	    return TRUE;
++
++	    services_action_async(op, mh_resource_callback);
++	    event.addReturnArgument("rc", OCF_PENDING);
++
++	} else {
++	    services_action_sync(op);
++	    event.addReturnArgument("rc", op->rc);
++	    services_action_free(op);
++	}
++    } else if (methodName == "invoke") {
++	GHashTable *params = qmf_map_to_hash(event.getArguments()["parameters"].asMap());
++	svc_action_t *op = resources_action_create(
++	    event.getArguments()["name"].asString().c_str(), event.getArguments()["provider"].asString().c_str(), 
++	    event.getArguments()["type"].asString().c_str(), event.getArguments()["action"].asString().c_str(),
++	    event.getArguments()["interval"], event.getArguments()["timeout"], params);
++		
++	if(op->interval) {
++	    session.raiseException(event, MH_NOT_IMPLEMENTED);
++	    return TRUE;
+ 
+-	// case _qmf::Resources::METHOD_DESCRIBE:
++	    services_action_async(op, mh_resource_callback);
++	    event.addReturnArgument("rc", OCF_PENDING);
++
++	} else {
++	    services_action_sync(op);
++	    event.addReturnArgument("rc", op->rc);
++	    services_action_free(op);
+ 	}
+-    return Manageable::STATUS_NOT_IMPLEMENTED;
++    } else if (methodName == "cancel") {
++	services_action_cancel(
++	    event.getArguments()["name"].asString().c_str(), event.getArguments()["action"].asString().c_str(),
++	    event.getArguments()["interval"]);
++
++    } else {
++	session.raiseException(event, MH_NOT_IMPLEMENTED);
++	return TRUE;
++    }
++	    
++    session.methodSuccess(event);
++    return TRUE;
+ }

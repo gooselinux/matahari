@@ -1,0 +1,50 @@
+ - mh_qmfagent which provides glib routines for adding/removing qmf session from the main event loop.
+---
+ src/CMakeLists.txt |   12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+Index: beekhof-matahari-0b41287/src/CMakeLists.txt
+===================================================================
+--- beekhof-matahari-0b41287.orig/src/CMakeLists.txt	2011-03-25 09:49:03.484016911 +0100
++++ beekhof-matahari-0b41287/src/CMakeLists.txt	2011-03-25 09:50:54.965012625 +0100
+@@ -15,6 +15,7 @@ endif(WIN32)
+ set(CMAKE_C_FLAGS "-Wall")
+ set(CMAKE_CXX_FLAGS "-Wall")
+ 
++set(MAGENT_VERSION 0.0.1)
+ set(MCOMMON_VERSION 0.0.1)
+ set(MHOST_VERSION 0.0.1)
+ set(MSRV_VERSION 0.0.1)
+@@ -55,7 +56,10 @@ set(SCHEMA_SOURCES
+         ${CMAKE_CURRENT_BINARY_DIR}/qmf/org/matahariproject/Package.cpp)
+ 
+ ## Libraries and Common code
+-set(COMMON_SOURCES lib/mh_agent.cpp)
++# set(COMMON_SOURCES lib/mh_agent.cpp)
++
++add_library (mqmfagent SHARED lib/mh_agent.cpp)
++set_target_properties(mqmfagent PROPERTIES SOVERSION ${MAGENT_VERSION})
+ 
+ add_library (mcommon SHARED lib/utilities.c lib/mainloop.c)
+ set_target_properties(mcommon PROPERTIES SOVERSION ${MCOMMON_VERSION})
+@@ -88,7 +92,7 @@ add_executable(${M_SRV}  service/matahar
+ target_link_libraries(${M_SRV} msrv)
+ 
+ foreach(daemon ${DAEMONS}) 
+-   target_link_libraries(${daemon} mcommon)
++   target_link_libraries(${daemon} mcommon mqmfagent)
+    if(WIN32)
+       target_link_libraries(${daemon} wsock32)
+    endif(WIN32)
+@@ -196,9 +200,9 @@ endforeach(daemon ${DAEMONS}) 
+ install(TARGETS ${DAEMONS}  DESTINATION sbin)
+ 
+ if(WIN32)
+-install(TARGETS mcommon mhost mnet msrv DESTINATION sbin)
++install(TARGETS mqmfagent mcommon mhost mnet msrv DESTINATION sbin)
+ else(WIN32)
+-install(TARGETS mcommon mhost mnet msrv DESTINATION lib${LIB_SUFFIX})
++install(TARGETS mqmfagent mcommon mhost mnet msrv DESTINATION lib${LIB_SUFFIX})
+ endif(WIN32)
+ 
+ install(FILES ${SCHEMAS} DESTINATION share/matahari)
